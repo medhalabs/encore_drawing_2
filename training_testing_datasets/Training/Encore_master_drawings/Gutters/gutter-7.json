@@ -1,0 +1,33 @@
+{
+            "_id": "69a102e2e52337e3662ea89d",
+            "name": "SHROUD",
+            "lengths": [
+                200,
+                250,
+                200
+            ],
+            "angles": [
+                -90,
+                -90
+            ],
+            "direction": "Up",
+            "reverseColor": false,
+            "isTaper": false,
+            "farLengths": [],
+            "farAngles": [],
+            "nearLengths": [],
+            "nearAngles": [],
+            "partGroup": "Flashing",
+            "partClass": "Gutters",
+            "firstSegmentAngle": 90,
+            "flipH": false,
+            "flipV": false,
+            "startFoldType": "SF",
+            "startFoldDirection": "up",
+            "startFoldLength": 10,
+            "startFoldGap": null,
+            "endFoldType": "SF",
+            "endFoldDirection": "Up",
+            "endFoldLength": 10,
+            "endFoldGap": null
+        }

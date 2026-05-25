@@ -1,0 +1,35 @@
+{
+  "_id": "69a104bbe52337e366324480",
+  "name": "Barge with turn down",
+  "lengths": [
+    50.0,
+    100.0,
+    150.0,
+    10.0
+  ],
+  "angles": [
+    135.0,
+    90.0,
+    90.0
+  ],
+  "direction": "Left",
+  "reverseColor": true,
+  "isTaper": false,
+  "farLengths": [],
+  "farAngles": [],
+  "nearLengths": [],
+  "nearAngles": [],
+  "partGroup": "Flashing",
+  "partClass": "Cappings",
+  "firstSegmentAngle": 135.0,
+  "flipH": false,
+  "flipV": false,
+  "startFoldType": null,
+  "startFoldDirection": null,
+  "startFoldLength": null,
+  "startFoldGap": null,
+  "endFoldType": null,
+  "endFoldDirection": null,
+  "endFoldLength": null,
+  "endFoldGap": null
+}

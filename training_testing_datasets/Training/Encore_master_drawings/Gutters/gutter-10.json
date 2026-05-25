@@ -1,0 +1,37 @@
+{
+            "_id": "69a10389e52337e3662fed2f",
+            "name": "",
+            "lengths": [
+                10,
+                150,
+                200,
+                150,
+                10
+            ],
+            "angles": [
+                135,
+                22,
+                22,
+                135
+            ],
+            "direction": "Right",
+            "reverseColor": false,
+            "isTaper": false,
+            "farLengths": [],
+            "farAngles": [],
+            "nearLengths": [],
+            "nearAngles": [],
+            "partGroup": "Flashing",
+            "partClass": "Gutters",
+            "firstSegmentAngle": 0,
+            "flipH": false,
+            "flipV": false,
+            "startFoldType": null,
+            "startFoldDirection": null,
+            "startFoldLength": null,
+            "startFoldGap": null,
+            "endFoldType": null,
+            "endFoldDirection": null,
+            "endFoldLength": null,
+            "endFoldGap": null
+        }

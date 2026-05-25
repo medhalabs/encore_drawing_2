@@ -1,0 +1,35 @@
+{
+            "_id": "69a11e8ae52337e3665ce8ee",
+            "name": "",
+            "lengths": [
+                40,
+                200,
+                200,
+                40
+            ],
+            "angles": [
+                85,
+                10,
+                85
+            ],
+            "direction": "Down",
+            "reverseColor": true,
+            "isTaper": false,
+            "farLengths": [],
+            "farAngles": [],
+            "nearLengths": [],
+            "nearAngles": [],
+            "partGroup": "Flashing",
+            "partClass": "Ridge & Valley",
+            "firstSegmentAngle": -90,
+            "flipH": false,
+            "flipV": false,
+            "startFoldType": null,
+            "startFoldDirection": null,
+            "startFoldLength": null,
+            "startFoldGap": null,
+            "endFoldType": null,
+            "endFoldDirection": null,
+            "endFoldLength": null,
+            "endFoldGap": null
+        }

@@ -1,0 +1,33 @@
+{
+  "_id": "69a1008de52337e3662a284e",
+  "name": "CONCEALED GUTTER",
+  "lengths": [
+    50.0,
+    100.0,
+    100.0
+  ],
+  "angles": [
+    -90.0,
+    -68.0
+  ],
+  "direction": "Up",
+  "reverseColor": true,
+  "isTaper": false,
+  "farLengths": [],
+  "farAngles": [],
+  "nearLengths": [],
+  "nearAngles": [],
+  "partGroup": "Flashing",
+  "partClass": "Gutters",
+  "firstSegmentAngle": 90.0,
+  "flipH": false,
+  "flipV": false,
+  "startFoldType": null,
+  "startFoldDirection": null,
+  "startFoldLength": null,
+  "startFoldGap": null,
+  "endFoldType": null,
+  "endFoldDirection": null,
+  "endFoldLength": null,
+  "endFoldGap": null
+}

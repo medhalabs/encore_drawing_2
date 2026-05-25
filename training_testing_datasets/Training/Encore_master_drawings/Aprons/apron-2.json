@@ -1,0 +1,33 @@
+{
+            "_id": "69a10895e52337e36639d00e",
+            "name": "",
+            "lengths": [
+                100,
+                200,
+                10
+            ],
+            "angles": [
+                -90,
+                30
+            ],
+            "direction": "Up",
+            "reverseColor": true,
+            "isTaper": false,
+            "farLengths": [],
+            "farAngles": [],
+            "nearLengths": [],
+            "nearAngles": [],
+            "partGroup": "Flashing",
+            "partClass": "Aprons",
+            "firstSegmentAngle": 90,
+            "flipH": false,
+            "flipV": false,
+            "startFoldType": null,
+            "startFoldDirection": null,
+            "startFoldLength": null,
+            "startFoldGap": null,
+            "endFoldType": null,
+            "endFoldDirection": null,
+            "endFoldLength": null,
+            "endFoldGap": null
+        }

@@ -1,0 +1,35 @@
+{
+            "_id": "69a1255ee52337e36666eac7",
+            "name": "",
+            "lengths": [
+                40,
+                180,
+                180,
+                40
+            ],
+            "angles": [
+                -90,
+                -90,
+                -90
+            ],
+            "direction": "Left",
+            "reverseColor": false,
+            "isTaper": false,
+            "farLengths": [],
+            "farAngles": [],
+            "nearLengths": [],
+            "nearAngles": [],
+            "partGroup": "Flashing",
+            "partClass": "Foot Moulds",
+            "firstSegmentAngle": -180,
+            "flipH": false,
+            "flipV": false,
+            "startFoldType": null,
+            "startFoldDirection": null,
+            "startFoldLength": null,
+            "startFoldGap": null,
+            "endFoldType": null,
+            "endFoldDirection": null,
+            "endFoldLength": null,
+            "endFoldGap": null
+        }

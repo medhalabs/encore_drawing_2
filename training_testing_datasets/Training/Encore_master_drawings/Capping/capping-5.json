@@ -1,0 +1,35 @@
+{
+            "_id": "69a10420e52337e366311383",
+            "name": "Barge Capping",
+            "lengths": [
+                10,
+                100,
+                100,
+                10
+            ],
+            "angles": [
+                135,
+                90,
+                30
+            ],
+            "direction": "Left",
+            "reverseColor": true,
+            "isTaper": false,
+            "farLengths": [],
+            "farAngles": [],
+            "nearLengths": [],
+            "nearAngles": [],
+            "partGroup": "Flashing",
+            "partClass": "Cappings",
+            "firstSegmentAngle": 135,
+            "flipH": false,
+            "flipV": false,
+            "startFoldType": null,
+            "startFoldDirection": null,
+            "startFoldLength": null,
+            "startFoldGap": null,
+            "endFoldType": null,
+            "endFoldDirection": null,
+            "endFoldLength": null,
+            "endFoldGap": null
+        }

@@ -1,0 +1,35 @@
+{
+            "_id": "69a100dee52337e3662ac7e3",
+            "name": "LEAR GUTTER",
+            "lengths": [
+                10,
+                200,
+                150,
+                40
+            ],
+            "angles": [
+                -135,
+                -22,
+                90
+            ],
+            "direction": "Left",
+            "reverseColor": true,
+            "isTaper": false,
+            "farLengths": [],
+            "farAngles": [],
+            "nearLengths": [],
+            "nearAngles": [],
+            "partGroup": "Flashing",
+            "partClass": "Gutters",
+            "firstSegmentAngle": 153.434948822922,
+            "flipH": false,
+            "flipV": false,
+            "startFoldType": null,
+            "startFoldDirection": null,
+            "startFoldLength": null,
+            "startFoldGap": null,
+            "endFoldType": null,
+            "endFoldDirection": null,
+            "endFoldLength": null,
+            "endFoldGap": null
+        }
