@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     ollama_api_key: str = ""
     ollama_vision_model: str = "qwen3-vl:235b-instruct"
     ollama_llm_text_model: str = "gpt-oss:120b-cloud"
+    ollama_embed_model: str = "nomic-embed-text"
+
+    retrieval_vector_weight: float = 0.35
+    retrieval_rule_weight: float = 0.65
+    vector_search_top_k: int = 20
 
     master_drawings_path: str = "../training_testing_datasets/Training/Encore_master_drawings"
     feedback_dir: str = "../training_testing_datasets/feedback"

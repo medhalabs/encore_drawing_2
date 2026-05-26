@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config.settings import Settings
@@ -24,6 +25,14 @@ async def create_tables() -> None:
 
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_master_drawings_embedding
+                ON master_drawings USING hnsw (embedding vector_cosine_ops)
+                """
+            )
+        )
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

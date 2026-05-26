@@ -9,6 +9,7 @@ export interface AgentTraceStep {
 
 export interface ScoreBreakdown {
   retrieval_score: number;
+  vector_score?: number;
   vision_score: number;
   feedback_boost: number;
   combined_score: number;

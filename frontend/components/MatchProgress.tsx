@@ -29,15 +29,37 @@ function statusColor(status: string) {
   return "bg-slate-700";
 }
 
-function StepDetails({ data }: { data: Record<string, unknown> }) {
+function RetrieveStepSummary({ data }: { data: Record<string, unknown> }) {
+  const vectorTop = data.vector_top_candidates as Array<{ key: string; similarity: number }> | undefined;
+  if (!vectorTop?.length) return null;
+
+  return (
+    <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+      <p className="text-xs font-medium text-slate-300 mb-2">pgvector top matches</p>
+      <ul className="space-y-1 text-xs text-slate-400">
+        {vectorTop.slice(0, 5).map((item) => (
+          <li key={item.key} className="flex justify-between gap-4">
+            <span className="truncate">{item.key}</span>
+            <span className="text-slate-300 shrink-0">{Math.round(item.similarity * 100)}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function StepDetails({ step, data }: { step: string; data: Record<string, unknown> }) {
   if (!data || Object.keys(data).length === 0) {
     return <p className="text-xs text-slate-500 mt-2">No debug data</p>;
   }
 
   return (
-    <pre className="mt-2 rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs overflow-auto max-h-64 text-slate-300">
-      {JSON.stringify(data, null, 2)}
-    </pre>
+    <>
+      {step === "retrieve" && <RetrieveStepSummary data={data} />}
+      <pre className="mt-2 rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs overflow-auto max-h-64 text-slate-300">
+        {JSON.stringify(data, null, 2)}
+      </pre>
+    </>
   );
 }
 
@@ -115,7 +137,7 @@ export default function MatchProgress({ trace, loading, currentStep }: Props) {
                 </div>
                 <span className="text-slate-500 text-xs">{isOpen ? "▾" : "▸"}</span>
               </button>
-              {isOpen && entry && <div className="px-3 pb-3"><StepDetails data={entry.data} /></div>}
+              {isOpen && entry && <div className="px-3 pb-3"><StepDetails step={step} data={entry.data} /></div>}
             </div>
           );
         })}

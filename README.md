@@ -57,9 +57,16 @@ curl http://localhost:8000/api/v1/health
 ```
 
 On first startup the backend will:
-- Create DB tables automatically
+- Create DB tables automatically (including pgvector HNSW index on `master_drawings.embedding`)
 - Seed **48 master drawings** from the filesystem into Postgres
+- **Backfill embeddings** for any masters missing vectors (Ollama `nomic-embed-text`, cached in Redis)
 - Import existing file-based corrections into the `corrections` table
+
+Re-embed all masters manually:
+
+```bash
+cd backend && uv run python scripts/backfill_embeddings.py
+```
 
 ### 3. Frontend
 
@@ -86,10 +93,11 @@ Open http://localhost:3000
 
 | Data | PostgreSQL | Redis | Files |
 |---|---|---|---|
-| Master catalog (48 drawings) | `master_drawings` | — | `training_testing_datasets/Training/` |
+| Master catalog (48 drawings) | `master_drawings` (+ pgvector embeddings) | — | `training_testing_datasets/Training/` |
 | Match job results | `match_jobs` | — | uploads in `backend/data/uploads/` |
 | User corrections | `corrections` | — | `training_testing_datasets/feedback/` |
 | Ollama vision/compare cache | — | image hash keys (24h TTL) | — |
+| Ollama text embed cache | — | embed hash keys (24h TTL) | — |
 
 ## Dataset
 

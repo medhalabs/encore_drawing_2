@@ -65,6 +65,25 @@ def cache_set_sync(key: str, value: Any, ttl_seconds: int) -> None:
     _redis_sync.set(f"vision:{key}", json.dumps(value), ex=ttl_seconds)
 
 
+def build_embed_cache_key(model: str, text: str) -> str:
+    return hashlib.sha256(f"{model}:{hash_text(text)}".encode()).hexdigest()
+
+
+def cache_get_embed_sync(key: str) -> list[float] | None:
+    if _redis_sync is None:
+        return None
+    raw = _redis_sync.get(f"embed:{key}")
+    if not raw:
+        return None
+    return json.loads(raw)
+
+
+def cache_set_embed_sync(key: str, value: list[float], ttl_seconds: int) -> None:
+    if _redis_sync is None:
+        return
+    _redis_sync.set(f"embed:{key}", json.dumps(value), ex=ttl_seconds)
+
+
 async def ping_redis() -> bool:
     if _redis_async is None:
         return False

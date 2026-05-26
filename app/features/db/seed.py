@@ -2,6 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.db.models import Correction, MasterDrawing
+from app.features.embeddings.service import EmbeddingService
 from app.features.masters.catalog import MasterCatalog
 
 
@@ -73,3 +74,32 @@ async def import_corrections_from_manifest(session: AsyncSession, entries: list)
     if added:
         await session.commit()
     return added
+
+
+async def backfill_master_embeddings(
+    session: AsyncSession,
+    catalog: MasterCatalog,
+    embedding_service: EmbeddingService,
+) -> int:
+    catalog.load()
+    repo_rows = (
+        await session.scalars(
+            select(MasterDrawing).where(MasterDrawing.embedding.is_(None))
+        )
+    ).all()
+    if not repo_rows:
+        return 0
+
+    by_key = {m.key: m for m in catalog.masters}
+    updated = 0
+    for row in repo_rows:
+        master = by_key.get(row.master_key)
+        if not master:
+            continue
+        vector = embedding_service.embed_master(master)
+        row.embedding = vector
+        updated += 1
+
+    if updated:
+        await session.commit()
+    return updated

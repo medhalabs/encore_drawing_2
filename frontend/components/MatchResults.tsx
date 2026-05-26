@@ -53,10 +53,18 @@ export default function MatchResults({ result, onResultUpdate }: Props) {
       {result.score_breakdown && (
         <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm">
           <h3 className="font-medium mb-3">Match score breakdown</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <div>
               <p className="text-slate-500 text-xs">Retrieval</p>
               <p className="font-medium">{result.score_breakdown.retrieval_score}</p>
+            </div>
+            <div>
+              <p className="text-slate-500 text-xs">Vector similarity</p>
+              <p className="font-medium">
+                {result.score_breakdown.vector_score != null
+                  ? `${Math.round(result.score_breakdown.vector_score * 100)}%`
+                  : "—"}
+              </p>
             </div>
             <div>
               <p className="text-slate-500 text-xs">Vision shape</p>

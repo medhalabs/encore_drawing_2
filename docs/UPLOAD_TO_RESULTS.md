@@ -240,14 +240,21 @@ Each step emits an `AgentTraceStep` streamed to the UI.
 
 ### Step 2: `retrieve`
 
-**Module:** `features/rag/retriever.py`  
-**Catalog:** 48 masters from `training_testing_datasets/Training/Encore_master_drawings/` (also seeded in Postgres)
+**Modules:** `features/embeddings/service.py`, `features/rag/vector_retriever.py`, `features/rag/retriever.py`  
+**Models:** Ollama `nomic-embed-text` (text embeddings) + existing vision for feedback image compare  
+**Storage:** Postgres pgvector cosine search (top 20), Redis embed cache (24h)
 
 **What happens:**
 
-1. **Feedback image matching** — Compare upload against saved correction images. If similarity ≥ 72%, add up to +60 score boost for that master key.
+1. **Embed sketch** — Build text from analyze output (part class, segment count, angles, shape description) and embed via Ollama. Cached in Redis.
 
-2. **Structural scoring** — Score all 48 masters:
+2. **pgvector search** — Query Postgres for top 20 masters by cosine similarity on stored master embeddings.
+
+3. **Feedback image matching** — Compare upload against saved correction images. If similarity ≥ 72%, add up to +60 score boost for that master key.
+
+4. **Hybrid structural + vector scoring** — Score all 48 masters:
+
+   **Base rule signals:**
 
    | Signal | Points |
    |---|---|
@@ -255,21 +262,37 @@ Each step emits an `AgentTraceStep` streamed to the UI.
    | Segment count off by 1 | +10 |
    | Angle distance (closer = more) | up to +25 |
    | Part class hint match | up to +15 |
+
+   **Hybrid merge** (when pgvector is available):
+
+   ```
+   score = 0.35 × vector_sim × 100 + 0.65 × rule_score + feedback_boosts − wrong_master_penalty
+   ```
+
+   | Extra signal | Points |
+   |---|---|
    | Saved correction (same master + segment count) | +50 |
    | Previously corrected-away master | −35 |
 
-3. Return **top 5** candidates.
+5. Return **top 5** candidates.
 
 **Debug data example:**
 ```json
 {
+  "vector_top_candidates": [
+    {"key": "Aprons/apron-6", "similarity": 0.842},
+    {"key": "Capping/capping-9", "similarity": 0.711}
+  ],
+  "sketch_embed_preview": "part_class=Aprons | segments=4 | angles=[90,90,90] | description=...",
   "candidates": [
-    {"key": "Aprons/apron-6", "score": 85, "reasons": ["segment_count_match", "feedback_segment_match:ddf9a591"]},
-    {"key": "Capping/capping-9", "score": 72, "reasons": ["segment_count_match", "part_class_match"]}
+    {"key": "Aprons/apron-6", "score": 85, "reasons": ["segment_count_match", "vector_sim=0.84", "feedback_segment_match:ddf9a591"]},
+    {"key": "Capping/capping-9", "score": 72, "reasons": ["segment_count_match", "vector_sim=0.71", "part_class_match"]}
   ],
   "feedback_image_boosts": {"Aprons/apron-6": 54.0}
 }
 ```
+
+**Note:** pgvector uses **text embeddings** of profile metadata/description, not raw pixels. True shape matching still happens in step 3 (`compare`) via vision model side-by-side PNG comparison.
 
 ---
 
@@ -295,7 +318,7 @@ combined = retrieval_score / 100 × 0.35 + vision_score × 0.65
 
 **What happens:**
 - Pick candidate with highest combined score from step 3
-- Build `ScoreBreakdown`: retrieval_score, vision_score, feedback_boost, combined_score
+- Build `ScoreBreakdown`: retrieval_score, vector_score, vision_score, feedback_boost, combined_score
 - If `vision_score < 0.65` (configurable), add warning: *"Low shape match — please verify"*
 
 **Output:** Selected `master_key`, confidence, score breakdown.
@@ -446,7 +469,7 @@ This is **human-in-the-loop learning**, not model fine-tuning.
 1. **`analyze`** — Is `segment_count` correct? Is `part_class_hint` right?
 2. **`retrieve`** — Is the correct master in top 5? What scores/reasons?
 3. **`compare`** — What vision score did the wrong master get? Read `reasoning`.
-4. **`match`** — Check `score_breakdown.vision_score` vs `retrieval_score`.
+4. **`match`** — Check `score_breakdown.vector_score`, `vision_score`, and `retrieval_score`.
 
 ### API health
 
@@ -473,9 +496,13 @@ Environment variables in `backend/.env`:
 | `OLLAMA_API_KEY` | — | Ollama Cloud authentication |
 | `OLLAMA_VISION_MODEL` | `qwen3-vl:235b-instruct` | Sketch analysis + comparison |
 | `OLLAMA_LLM_TEXT_MODEL` | `gpt-oss:120b-cloud` | Text reasoning (fallback selection) |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Text embeddings for pgvector retrieval |
+| `RETRIEVAL_VECTOR_WEIGHT` | `0.35` | Weight of vector similarity in hybrid retrieve score |
+| `RETRIEVAL_RULE_WEIGHT` | `0.65` | Weight of rule-based score in hybrid retrieve score |
+| `VECTOR_SEARCH_TOP_K` | `20` | pgvector candidates fetched before hybrid merge |
 | `DATABASE_URL` | `postgresql+asyncpg://encore:encore@localhost:5455/encore_drawings` | Postgres connection |
 | `REDIS_URL` | `redis://localhost:6377/0` | Redis connection |
-| `REDIS_CACHE_TTL_SECONDS` | `86400` | Vision cache TTL |
+| `REDIS_CACHE_TTL_SECONDS` | `86400` | Vision + embed cache TTL |
 | `MIN_VISION_SCORE` | `0.65` | Below this → warning + amber badge |
 | `FEEDBACK_IMAGE_MATCH_THRESHOLD` | `0.72` | Min similarity for image boost |
 | `FEEDBACK_IMAGE_BOOST` | `60` | Max boost from feedback image match |
@@ -495,7 +522,7 @@ Frontend:
 |---|---|
 | Upload + save | < 1 s |
 | Analyze (vision, cache miss) | 5–15 s |
-| Retrieve (structural + feedback images) | 5–20 s (feedback images call vision per correction) |
+| Retrieve (embed + pgvector + rules + feedback images) | 6–22 s |
 | Compare × 5 candidates (vision) | 15–40 s |
 | Extract lengths | 5–10 s |
 | Validate + persist | < 1 s |
@@ -512,6 +539,9 @@ Frontend:
 | Match service | [`backend/app/services/match_service.py`](../backend/app/services/match_service.py) |
 | Agent orchestrator | [`backend/app/features/agent/orchestrator.py`](../backend/app/features/agent/orchestrator.py) |
 | RAG retriever | [`backend/app/features/rag/retriever.py`](../backend/app/features/rag/retriever.py) |
+| pgvector search | [`backend/app/features/rag/vector_retriever.py`](../backend/app/features/rag/vector_retriever.py) |
+| Embeddings | [`backend/app/features/embeddings/service.py`](../backend/app/features/embeddings/service.py) |
+| Embed backfill script | [`backend/scripts/backfill_embeddings.py`](../backend/scripts/backfill_embeddings.py) |
 | Vision analyzer | [`backend/app/features/vision/sketch_analyzer.py`](../backend/app/features/vision/sketch_analyzer.py) |
 | Profile comparator | [`backend/app/features/vision/profile_comparator.py`](../backend/app/features/vision/profile_comparator.py) |
 | Ollama + Redis cache | [`backend/app/features/ollama/client.py`](../backend/app/features/ollama/client.py) |

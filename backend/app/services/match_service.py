@@ -60,7 +60,7 @@ class MatchService:
         trace.append(step)
         await self._emit(step, on_step)
 
-        candidates, step = self.orchestrator.retrieve_candidates(sketch_path, analysis)
+        candidates, step = await self.orchestrator.retrieve_candidates(sketch_path, analysis)
         trace.append(step)
         await self._emit(step, on_step)
 

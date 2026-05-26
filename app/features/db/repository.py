@@ -1,8 +1,8 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.models.schemas import FeedbackEntry, MatchResult
-from app.features.db.models import Correction, MatchJob
+from app.features.db.models import Correction, MasterDrawing, MatchJob
 
 
 class DatabaseRepository:
@@ -71,3 +71,32 @@ class DatabaseRepository:
             )
             for r in rows
         ]
+
+    async def list_masters_missing_embeddings(self) -> list[MasterDrawing]:
+        rows = (
+            await self.session.scalars(
+                select(MasterDrawing).where(MasterDrawing.embedding.is_(None))
+            )
+        ).all()
+        return list(rows)
+
+    async def update_master_embedding(self, master_key: str, embedding: list[float]) -> None:
+        await self.session.execute(
+            update(MasterDrawing)
+            .where(MasterDrawing.master_key == master_key)
+            .values(embedding=embedding)
+        )
+
+    async def search_masters_by_embedding(
+        self, query_vector: list[float], limit: int = 20
+    ) -> list[tuple[str, float]]:
+        distance = MasterDrawing.embedding.cosine_distance(query_vector)
+        rows = (
+            await self.session.execute(
+                select(MasterDrawing.master_key, (1 - distance).label("similarity"))
+                .where(MasterDrawing.embedding.isnot(None))
+                .order_by(distance)
+                .limit(limit)
+            )
+        ).all()
+        return [(row.master_key, float(row.similarity)) for row in rows]

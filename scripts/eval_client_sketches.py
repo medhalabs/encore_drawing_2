@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config.settings import get_settings
 from app.features.agent.orchestrator import MatchOrchestrator
+from app.features.embeddings.service import EmbeddingService
 from app.features.feedback.store import FeedbackStore
 from app.features.masters.catalog import MasterCatalog
 from app.features.ollama.client import OllamaService
@@ -47,6 +48,7 @@ async def main():
     feedback_store = FeedbackStore(settings, catalog)
     feedback_store.load()
     ollama = OllamaService(settings)
+    embedding_service = EmbeddingService(settings, ollama, catalog)
     retriever = MasterRetriever(catalog)
     retriever.set_feedback_entries(feedback_store.entries)
     orchestrator = MatchOrchestrator(
@@ -56,6 +58,7 @@ async def main():
         ProfileComparator(ollama),
         ollama,
         feedback_store,
+        embedding_service,
     )
     service = MatchService(settings, catalog, orchestrator)
 

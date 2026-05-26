@@ -3,6 +3,8 @@ from pathlib import Path
 from app.config.settings import Settings
 from app.core.models.schemas import AgentTraceStep, CompareResult, ScoreBreakdown, SketchAnalysis
 from app.features.agent.prompts import SELECT_MASTER_PROMPT
+from app.features.db.database_service import db_service
+from app.features.embeddings.service import EmbeddingService
 from app.features.feedback.store import FeedbackStore
 from app.features.masters.loader import MasterRecord
 from app.features.ollama.client import OllamaService
@@ -20,6 +22,7 @@ class MatchOrchestrator:
         comparator: ProfileComparator,
         ollama: OllamaService,
         feedback_store: FeedbackStore,
+        embedding_service: EmbeddingService,
     ):
         self.settings = settings
         self.analyzer = analyzer
@@ -27,6 +30,7 @@ class MatchOrchestrator:
         self.comparator = comparator
         self.ollama = ollama
         self.feedback_store = feedback_store
+        self.embedding_service = embedding_service
         self._last_score_breakdown: ScoreBreakdown | None = None
 
     @property
@@ -61,22 +65,44 @@ class MatchOrchestrator:
             },
         )
 
-    def retrieve_candidates(
+    async def retrieve_candidates(
         self, sketch_path: Path, analysis: SketchAnalysis
     ) -> tuple[list[RetrievalCandidate], AgentTraceStep]:
         image_boosts = self._match_feedback_images(sketch_path)
         self.retriever.set_image_boosts(image_boosts)
+
+        sketch_embed_text = self.embedding_service.build_sketch_embed_text(analysis)
+        vector_scores: dict[str, float] = {}
+        vector_top_candidates: list[dict] = []
+        if db_service.enabled:
+            try:
+                sketch_vector = self.embedding_service.embed_text(sketch_embed_text)
+                vector_scores = await db_service.search_masters_by_embedding(
+                    sketch_vector, limit=self.settings.vector_search_top_k
+                )
+                vector_top_candidates = [
+                    {"key": key, "similarity": round(sim, 3)}
+                    for key, sim in sorted(
+                        vector_scores.items(), key=lambda item: item[1], reverse=True
+                    )[:10]
+                ]
+            except Exception as e:
+                vector_top_candidates = [{"error": str(e)}]
+        self.retriever.set_vector_scores(vector_scores)
+
         candidates = self.retriever.retrieve(analysis, top_k=5)
         return candidates, AgentTraceStep(
             step="retrieve",
             status="completed",
-            message=f"Retrieved {len(candidates)} candidate masters",
+            message=f"Retrieved {len(candidates)} candidate masters (hybrid pgvector + rules)",
             data={
                 "candidates": [
                     {"key": c.master.key, "score": c.score, "reasons": c.reasons}
                     for c in candidates
                 ],
                 "feedback_image_boosts": image_boosts,
+                "vector_top_candidates": vector_top_candidates,
+                "sketch_embed_preview": sketch_embed_text[:240],
             },
         )
 
@@ -126,6 +152,15 @@ class MatchOrchestrator:
         best = next(c.master for c in candidates if c.master.key == best_key)
 
         retrieval_score = next(c.score for c in candidates if c.master.key == best_key)
+        vector_score = 0.0
+        for reason in next(c.reasons for c in candidates if c.master.key == best_key):
+            if reason.startswith("vector_sim="):
+                try:
+                    vector_score = float(reason.split("=", 1)[1])
+                except ValueError:
+                    vector_score = 0.0
+                break
+
         vision_part = best_comparison.reasoning
         vision_score = 0.0
         if "vision=" in vision_part:
@@ -148,6 +183,7 @@ class MatchOrchestrator:
 
         breakdown = ScoreBreakdown(
             retrieval_score=round(retrieval_score, 1),
+            vector_score=round(vector_score, 3),
             vision_score=round(vision_score, 3),
             feedback_boost=feedback_boost,
             combined_score=round(best_comparison.score, 3),

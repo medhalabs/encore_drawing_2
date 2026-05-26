@@ -71,3 +71,15 @@ class OllamaService:
     def chat_text_json(self, prompt: str, system: str = "") -> dict:
         content = self.chat_text(prompt, system)
         return self._parse_json(content)
+
+    def embed(self, text: str) -> list[float]:
+        cache_key = redis_cache.build_embed_cache_key(self.settings.ollama_embed_model, text)
+        cached = redis_cache.cache_get_embed_sync(cache_key)
+        if cached is not None:
+            return cached
+        response = self.client.embed(model=self.settings.ollama_embed_model, input=text)
+        embedding = response["embeddings"][0]
+        redis_cache.cache_set_embed_sync(
+            cache_key, embedding, self.settings.redis_cache_ttl_seconds
+        )
+        return embedding

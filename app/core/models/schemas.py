@@ -104,6 +104,7 @@ class MatchedMaster(BaseModel):
 
 class ScoreBreakdown(BaseModel):
     retrieval_score: float = 0.0
+    vector_score: float = 0.0
     vision_score: float = 0.0
     feedback_boost: float = 0.0
     combined_score: float = 0.0

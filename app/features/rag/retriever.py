@@ -19,6 +19,7 @@ class MasterRetriever:
         self.catalog = catalog
         self._feedback_entries: list[FeedbackEntry] = []
         self._image_boosts: dict[str, float] = {}
+        self._vector_scores: dict[str, float] = {}
         self._wrong_masters: set[str] = set()
 
     def set_feedback_entries(self, entries: list[FeedbackEntry]) -> None:
@@ -29,6 +30,9 @@ class MasterRetriever:
 
     def set_image_boosts(self, boosts: dict[str, float]) -> None:
         self._image_boosts = boosts
+
+    def set_vector_scores(self, scores: dict[str, float]) -> None:
+        self._vector_scores = scores
 
     @staticmethod
     def _angle_distance(a: list[float], b: list[float]) -> float:
@@ -81,29 +85,40 @@ class MasterRetriever:
 
         for master in self.catalog.masters:
             reasons: list[str] = []
-            score = 0.0
+            base_score = 0.0
 
             seg_diff = abs(master.segment_count - analysis.segment_count)
             if seg_diff == 0:
-                score += 40
+                base_score += 40
                 reasons.append("segment_count_match")
             elif seg_diff == 1:
-                score += 10
+                base_score += 10
                 reasons.append("segment_count_close")
             else:
-                score -= seg_diff * 15
+                base_score -= seg_diff * 15
 
             angle_dist = self._angle_distance(master.drawing.angles, analysis.angles_estimate)
             if angle_dist < 999:
                 angle_score = max(0, 25 - angle_dist)
-                score += angle_score
+                base_score += angle_score
                 if angle_dist < 15:
                     reasons.append(f"angle_distance={angle_dist:.1f}")
 
             part_score = self._part_class_match(analysis.part_class_hint, master.drawing.part_class)
-            score += part_score * 15
+            base_score += part_score * 15
             if part_score > 0:
                 reasons.append("part_class_match")
+
+            vector_sim = self._vector_scores.get(master.key, 0.0)
+            if self._vector_scores:
+                score = (
+                    settings.retrieval_vector_weight * vector_sim * 100
+                    + settings.retrieval_rule_weight * base_score
+                )
+                if vector_sim > 0:
+                    reasons.append(f"vector_sim={vector_sim:.2f}")
+            else:
+                score = base_score
 
             fb_boost, fb_reasons = self._feedback_boost(analysis, master.key)
             score += fb_boost
