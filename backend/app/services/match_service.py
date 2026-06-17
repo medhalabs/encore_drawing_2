@@ -71,7 +71,7 @@ class MatchService:
         trace.append(step)
         await self._emit(step, on_step)
 
-        master, confidence, breakdown, match_warnings, step = self.orchestrator.select_master(
+        master, confidence, breakdown, match_warnings, top_candidates, step = self.orchestrator.select_master(
             analysis, candidates, comparisons
         )
         trace.append(step)
@@ -119,6 +119,7 @@ class MatchService:
             upload_image_url=f"/api/v1/match/{job_id}/upload",
             warnings=warnings,
             score_breakdown=breakdown,
+            top_candidates=top_candidates,
         )
         self._results[job_id] = result
         await db_service.save_match(result, str(sketch_path))

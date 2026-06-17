@@ -110,6 +110,16 @@ class ScoreBreakdown(BaseModel):
     combined_score: float = 0.0
 
 
+class TopCandidate(BaseModel):
+    key: str
+    name: str
+    category: str
+    image_url: str
+    combined_score: float
+    vision_score: float
+    reasoning: str
+
+
 class MatchResult(BaseModel):
     job_id: str
     matched_master: MatchedMaster
@@ -120,6 +130,7 @@ class MatchResult(BaseModel):
     upload_image_url: str = ""
     warnings: list[str] = Field(default_factory=list)
     score_breakdown: ScoreBreakdown | None = None
+    top_candidates: list[TopCandidate] = Field(default_factory=list)
 
 
 class FeedbackRequest(BaseModel):

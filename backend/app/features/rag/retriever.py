@@ -35,14 +35,6 @@ class MasterRetriever:
         self._vector_scores = scores
 
     @staticmethod
-    def _angle_distance(a: list[float], b: list[float]) -> float:
-        if not a or not b:
-            return 999.0
-        if len(a) != len(b):
-            return 999.0
-        return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
-
-    @staticmethod
     def _part_class_match(hint: str, part_class: str) -> float:
         if not hint:
             return 0.0
@@ -72,21 +64,73 @@ class MasterRetriever:
             if entry.segment_count == analysis.segment_count:
                 boost = max(boost, self.FEEDBACK_BOOST)
                 reasons.append(f"feedback_segment_match:{entry.feedback_id[:8]}")
-            angle_dist = self._angle_distance(entry.angles, analysis.angles_estimate)
-            if angle_dist < 25:
-                boost = max(boost, self.FEEDBACK_BOOST * 0.8)
-                reasons.append(f"feedback_angle_match:{entry.feedback_id[:8]}")
+            # Use flip-invariant angle distance via fingerprint
+            master = self.catalog.get_by_key(master_key)
+            if master:
+                angle_dist = master.fingerprint.angle_distance(analysis.angles_estimate)
+                if angle_dist < 25:
+                    boost = max(boost, self.FEEDBACK_BOOST * 0.8)
+                    reasons.append(f"feedback_angle_match:{entry.feedback_id[:8]}")
         return boost, reasons
 
-    def retrieve(self, analysis: SketchAnalysis, top_k: int = 5) -> list[RetrievalCandidate]:
+    def _fingerprint_score(self, master: MasterRecord, analysis: SketchAnalysis) -> tuple[float, list[str]]:
+        """Deterministic score using exact master geometry — never relies on LLM angle guessing."""
+        fp = master.fingerprint
+        score = 0.0
+        reasons: list[str] = []
+
+        # Angle distance (flip-invariant)
+        if analysis.angles_estimate:
+            angle_dist = fp.angle_distance(analysis.angles_estimate)
+            if angle_dist < 999:
+                angle_score = max(0.0, 30.0 - angle_dist)
+                score += angle_score
+                if angle_dist < 15:
+                    reasons.append(f"fp_angle_dist={angle_dist:.1f}")
+                elif angle_dist < 30:
+                    reasons.append(f"fp_angle_close={angle_dist:.1f}")
+
+        # Length ratio distance (scale-invariant)
+        if analysis.handwritten_lengths:
+            ratio_dist = fp.length_ratio_distance(analysis.handwritten_lengths)
+            if ratio_dist < 999:
+                ratio_score = max(0.0, 20.0 - ratio_dist * 40)
+                score += ratio_score
+                if ratio_dist < 0.15:
+                    reasons.append(f"fp_ratio_dist={ratio_dist:.2f}")
+
+        # Fold presence match
+        has_fold_hint = bool(analysis.fold_hints and analysis.fold_hints.strip())
+        master_has_fold = fp.has_start_fold or fp.has_end_fold
+        if has_fold_hint == master_has_fold:
+            score += 5.0
+            if has_fold_hint:
+                reasons.append("fp_fold_match")
+
+        return score, reasons
+
+    def retrieve(self, analysis: SketchAnalysis, top_k: int = 10) -> list[RetrievalCandidate]:
         from app.config.settings import get_settings
         settings = get_settings()
+
+        masters = self.catalog.masters
+
+        # Hard part-class filter when analyze confidence is high — shrinks collision space
+        if analysis.confidence >= 0.80 and analysis.part_class_hint:
+            filtered = [
+                m for m in masters
+                if self._part_class_match(analysis.part_class_hint, m.drawing.part_class) > 0.5
+            ]
+            if len(filtered) >= 3:
+                masters = filtered
+
         candidates: list[RetrievalCandidate] = []
 
-        for master in self.catalog.masters:
+        for master in masters:
             reasons: list[str] = []
             base_score = 0.0
 
+            # Segment count
             seg_diff = abs(master.segment_count - analysis.segment_count)
             if seg_diff == 0:
                 base_score += 40
@@ -97,18 +141,18 @@ class MasterRetriever:
             else:
                 base_score -= seg_diff * 15
 
-            angle_dist = self._angle_distance(master.drawing.angles, analysis.angles_estimate)
-            if angle_dist < 999:
-                angle_score = max(0, 25 - angle_dist)
-                base_score += angle_score
-                if angle_dist < 15:
-                    reasons.append(f"angle_distance={angle_dist:.1f}")
-
+            # Part class (soft signal)
             part_score = self._part_class_match(analysis.part_class_hint, master.drawing.part_class)
             base_score += part_score * 15
             if part_score > 0:
                 reasons.append("part_class_match")
 
+            # Deterministic fingerprint score (geometry-exact)
+            fp_score, fp_reasons = self._fingerprint_score(master, analysis)
+            base_score += fp_score
+            reasons.extend(fp_reasons)
+
+            # Vector similarity
             vector_sim = self._vector_scores.get(master.key, 0.0)
             if self._vector_scores:
                 score = (
@@ -120,6 +164,7 @@ class MasterRetriever:
             else:
                 score = base_score
 
+            # Feedback boosts
             fb_boost, fb_reasons = self._feedback_boost(analysis, master.key)
             score += fb_boost
             reasons.extend(fb_reasons)

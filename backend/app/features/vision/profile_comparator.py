@@ -4,22 +4,25 @@ from app.core.models.schemas import CompareResult
 from app.features.masters.loader import MasterRecord
 from app.features.ollama.client import OllamaService
 
-COMPARE_PROMPT = """Compare a handwritten sketch (first image) with a master machine drawing (second image).
+COMPARE_PROMPT = """You are a strict engineering drawing matcher for metal roofing flashing profiles.
 
-Both are metal flashing cross-section profiles. Decide if they are the SAME profile template:
-- SAME number of bends/segments
-- SAME overall shape topology (e.g. both U-shaped, both L-shaped, both zigzag apron)
-- Rotated or mirrored versions of the same template count as SAME
+Sketch (first image): handwritten client drawing
+Master (second image): precise CAD machine drawing — {master_key} ({category}, {segment_count} segments)
 
-Score LOW if:
-- Different topology (e.g. U-shape vs L-shape, open vs closed profile)
-- Different number of bends
-- Only share part category or similar numbers but different geometry
+Think step by step:
+1. SKETCH SHAPE: Count the bends/segments. Describe the overall topology (e.g. Z-shape, U-channel, L-angle, hat/capping, step, open apron). Note left/right direction.
+2. MASTER SHAPE: Same analysis on the master drawing.
+3. COMPARE: Are these the SAME template? Rules:
+   - Same number of bends = necessary condition
+   - Rotated or mirrored (flipped) versions of the same shape = SAME
+   - Different topology (e.g. open vs closed, U-channel vs Z-shape) = DIFFERENT even if segment count matches
+   - A Gutter (U-channel open at top) and a Capping (closed hat shape) are NEVER the same even with equal segments
+   - Small handwriting differences in dimensions are irrelevant — topology only
 
-Return ONLY JSON:
-{{"score": 0.0-1.0, "reasoning": "brief explanation", "same_topology": true/false}}
+Return ONLY valid JSON:
+{{"sketch_shape": "one phrase", "master_shape": "one phrase", "same_topology": true/false, "score": 0.0-1.0, "reasoning": "one sentence"}}
 
-Score guide: 1.0 = identical template, 0.7+ = same topology different dims, 0.4 = uncertain, 0.0-0.3 = different profile."""
+Score guide: 1.0=identical topology, 0.75-0.95=same topology different proportions, 0.4-0.6=uncertain, 0.0-0.35=different topology"""
 
 FEEDBACK_COMPARE_PROMPT = """Compare two handwritten/reference sketch images of metal flashing profiles.
 
@@ -34,18 +37,31 @@ class ProfileComparator:
         self.ollama = ollama
 
     def compare(self, sketch_path: Path, master: MasterRecord) -> CompareResult:
+        prompt = COMPARE_PROMPT.format(
+            master_key=master.key,
+            category=master.category,
+            segment_count=master.segment_count,
+        )
         data = self.ollama.chat_vision_json(
-            COMPARE_PROMPT,
+            prompt,
             [sketch_path, master.image_path],
-            system="You are a strict engineering drawing matcher. Penalize different profile topologies heavily.",
+            system=(
+                "You are a strict engineering drawing matcher. "
+                "Penalize different profile topologies heavily. "
+                "Focus on shape topology, not dimensions."
+            ),
         )
         score = float(data.get("score", 0.0))
         if data.get("same_topology") is False:
             score = min(score, 0.35)
+        reasoning = (
+            f"sketch={data.get('sketch_shape','?')} master={data.get('master_shape','?')} "
+            f"same_topology={data.get('same_topology')} {data.get('reasoning','')}"
+        )
         return CompareResult(
             master_key=master.key,
             score=score,
-            reasoning=str(data.get("reasoning", "")),
+            reasoning=reasoning,
         )
 
     def compare_to_reference_image(self, sketch_path: Path, reference_path: Path) -> CompareResult:

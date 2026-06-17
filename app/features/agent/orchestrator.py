@@ -1,7 +1,8 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.config.settings import Settings
-from app.core.models.schemas import AgentTraceStep, CompareResult, ScoreBreakdown, SketchAnalysis
+from app.core.models.schemas import AgentTraceStep, CompareResult, ScoreBreakdown, SketchAnalysis, TopCandidate
 from app.features.agent.prompts import SELECT_MASTER_PROMPT
 from app.features.db.database_service import db_service
 from app.features.embeddings.service import EmbeddingService
@@ -11,6 +12,18 @@ from app.features.ollama.client import OllamaService
 from app.features.rag.retriever import MasterRetriever, RetrievalCandidate
 from app.features.vision.profile_comparator import ProfileComparator
 from app.features.vision.sketch_analyzer import SketchAnalyzer
+
+
+@dataclass
+class _CompareDetail:
+    """Internal: carries raw retrieval + vision scores without string encoding."""
+    master: MasterRecord
+    retrieval_score: float
+    vision_score: float
+    vector_score: float
+    combined_score: float
+    reasoning: str
+    feedback_boost: float
 
 
 class MatchOrchestrator:
@@ -32,6 +45,7 @@ class MatchOrchestrator:
         self.feedback_store = feedback_store
         self.embedding_service = embedding_service
         self._last_score_breakdown: ScoreBreakdown | None = None
+        self._last_compare_details: list[_CompareDetail] = []
 
     @property
     def last_score_breakdown(self) -> ScoreBreakdown | None:
@@ -90,11 +104,11 @@ class MatchOrchestrator:
                 vector_top_candidates = [{"error": str(e)}]
         self.retriever.set_vector_scores(vector_scores)
 
-        candidates = self.retriever.retrieve(analysis, top_k=5)
+        candidates = self.retriever.retrieve(analysis, top_k=10)
         return candidates, AgentTraceStep(
             step="retrieve",
             status="completed",
-            message=f"Retrieved {len(candidates)} candidate masters (hybrid pgvector + rules)",
+            message=f"Retrieved {len(candidates)} candidate masters (hybrid pgvector + fingerprint + rules)",
             data={
                 "candidates": [
                     {"key": c.master.key, "score": c.score, "reasons": c.reasons}
@@ -108,31 +122,53 @@ class MatchOrchestrator:
 
     def compare_candidates(
         self, sketch_path: Path, candidates: list[RetrievalCandidate]
-    ) -> tuple[list[CompareResult], AgentTraceStep]:
-        results: list[CompareResult] = []
+    ) -> tuple[list[_CompareDetail], AgentTraceStep]:
+        details: list[_CompareDetail] = []
         for candidate in candidates:
             vision = self.comparator.compare(sketch_path, candidate.master)
-            combined = candidate.score / 100 * 0.35 + vision.score * 0.65
-            results.append(
-                CompareResult(
-                    master_key=vision.master_key,
-                    score=combined,
-                    reasoning=f"retrieval={candidate.score:.0f}, vision={vision.score:.2f}: {vision.reasoning}",
-                )
+
+            # Extract vector_score from reasons (stored as string tag, read once here)
+            vector_score = 0.0
+            for reason in candidate.reasons:
+                if reason.startswith("vector_sim="):
+                    try:
+                        vector_score = float(reason.split("=", 1)[1])
+                    except ValueError:
+                        pass
+                    break
+
+            feedback_boost = sum(
+                50.0 for r in candidate.reasons if r.startswith("feedback")
             )
-        results.sort(key=lambda r: r.score, reverse=True)
-        return results, AgentTraceStep(
+
+            combined = candidate.score / 100 * 0.35 + vision.score * 0.65
+            details.append(_CompareDetail(
+                master=candidate.master,
+                retrieval_score=candidate.score,
+                vision_score=vision.score,
+                vector_score=vector_score,
+                combined_score=combined,
+                reasoning=vision.reasoning,
+                feedback_boost=min(feedback_boost, 50.0),
+            ))
+
+        details.sort(key=lambda d: d.combined_score, reverse=True)
+        self._last_compare_details = details
+
+        return details, AgentTraceStep(
             step="compare",
             status="completed",
-            message=f"Compared sketch against {len(results)} master drawings",
+            message=f"Compared sketch against {len(details)} master drawings",
             data={
                 "comparisons": [
                     {
-                        "master_key": r.master_key,
-                        "combined_score": round(r.score, 3),
-                        "reasoning": r.reasoning,
+                        "master_key": d.master.key,
+                        "combined_score": round(d.combined_score, 3),
+                        "vision_score": round(d.vision_score, 3),
+                        "retrieval_score": round(d.retrieval_score, 1),
+                        "reasoning": d.reasoning,
                     }
-                    for r in results
+                    for d in details
                 ]
             },
         )
@@ -141,65 +177,54 @@ class MatchOrchestrator:
         self,
         analysis: SketchAnalysis,
         candidates: list[RetrievalCandidate],
-        comparisons: list[CompareResult],
-    ) -> tuple[MasterRecord, float, ScoreBreakdown, list[str], AgentTraceStep]:
+        details: list[_CompareDetail],
+    ) -> tuple[MasterRecord, float, ScoreBreakdown, list[str], list[TopCandidate], AgentTraceStep]:
         warnings: list[str] = []
-        if not comparisons:
+        if not details:
             raise ValueError("No comparison results available")
 
-        best_comparison = comparisons[0]
-        best_key = best_comparison.master_key
-        best = next(c.master for c in candidates if c.master.key == best_key)
-
-        retrieval_score = next(c.score for c in candidates if c.master.key == best_key)
-        vector_score = 0.0
-        for reason in next(c.reasons for c in candidates if c.master.key == best_key):
-            if reason.startswith("vector_sim="):
-                try:
-                    vector_score = float(reason.split("=", 1)[1])
-                except ValueError:
-                    vector_score = 0.0
-                break
-
-        vision_part = best_comparison.reasoning
-        vision_score = 0.0
-        if "vision=" in vision_part:
-            try:
-                vision_score = float(vision_part.split("vision=")[1].split(":")[0])
-            except ValueError:
-                vision_score = 0.0
+        best = details[0]
+        vision_score = best.vision_score
 
         if vision_score < self.settings.min_vision_score:
             warnings.append(
                 f"Low shape match (vision {vision_score:.0%}). Please verify or use Correct this match."
             )
 
-        feedback_boost = 0.0
-        for c in candidates:
-            if c.master.key == best_key:
-                for reason in c.reasons:
-                    if reason.startswith("feedback"):
-                        feedback_boost = max(feedback_boost, 50.0)
-
         breakdown = ScoreBreakdown(
-            retrieval_score=round(retrieval_score, 1),
-            vector_score=round(vector_score, 3),
+            retrieval_score=round(best.retrieval_score, 1),
+            vector_score=round(best.vector_score, 3),
             vision_score=round(vision_score, 3),
-            feedback_boost=feedback_boost,
-            combined_score=round(best_comparison.score, 3),
+            feedback_boost=best.feedback_boost,
+            combined_score=round(best.combined_score, 3),
         )
         self._last_score_breakdown = breakdown
 
-        confidence = vision_score if vision_score >= self.settings.min_vision_score else best_comparison.score * 0.7
+        confidence = vision_score if vision_score >= self.settings.min_vision_score else best.combined_score * 0.7
 
-        return best, confidence, breakdown, warnings, AgentTraceStep(
+        # Top-3 candidates for low-confidence UI display
+        top_candidates = [
+            TopCandidate(
+                key=d.master.key,
+                name=d.master.display_name,
+                category=d.master.category,
+                image_url=f"/api/v1/masters/{d.master.key}/image",
+                combined_score=round(d.combined_score, 3),
+                vision_score=round(d.vision_score, 3),
+                reasoning=d.reasoning,
+            )
+            for d in details[:3]
+        ]
+
+        return best.master, confidence, breakdown, warnings, top_candidates, AgentTraceStep(
             step="match",
             status="warning" if warnings else "completed",
-            message=f"Selected master {best.key} (vision {vision_score:.0%}, retrieval {retrieval_score:.0f})",
+            message=f"Selected master {best.master.key} (vision {vision_score:.0%}, retrieval {best.retrieval_score:.0f})",
             data={
-                "master_key": best.key,
+                "master_key": best.master.key,
                 "confidence": confidence,
                 "score_breakdown": breakdown.model_dump(),
+                "low_confidence": vision_score < self.settings.min_vision_score,
             },
         )
 
