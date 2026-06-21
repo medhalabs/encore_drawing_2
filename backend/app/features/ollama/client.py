@@ -63,10 +63,16 @@ class OllamaService:
         cached = redis_cache.cache_get_sync(cache_key)
         if cached is not None:
             return cached
-        content = self.chat_vision(prompt, image_paths, system)
-        parsed = self._parse_json(content)
-        redis_cache.cache_set_sync(cache_key, parsed, self.settings.redis_cache_ttl_seconds)
-        return parsed
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                content = self.chat_vision(prompt, image_paths, system)
+                parsed = self._parse_json(content)
+                redis_cache.cache_set_sync(cache_key, parsed, self.settings.redis_cache_ttl_seconds)
+                return parsed
+            except (json.JSONDecodeError, ValueError) as e:
+                last_err = e
+        raise ValueError(f"Model returned invalid JSON after 3 attempts: {last_err}")
 
     def chat_text_json(self, prompt: str, system: str = "") -> dict:
         content = self.chat_text(prompt, system)

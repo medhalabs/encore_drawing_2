@@ -115,8 +115,8 @@ class MasterRetriever:
 
         masters = self.catalog.masters
 
-        # Hard part-class filter when analyze confidence is high — shrinks collision space
-        if analysis.confidence >= 0.80 and analysis.part_class_hint:
+        # Hard part-class filter — shrinks collision space between categories (e.g. Capping vs Aprons)
+        if analysis.confidence >= 0.60 and analysis.part_class_hint:
             filtered = [
                 m for m in masters
                 if self._part_class_match(analysis.part_class_hint, m.drawing.part_class) > 0.5

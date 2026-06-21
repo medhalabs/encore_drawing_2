@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,7 +105,7 @@ class MatchOrchestrator:
                 vector_top_candidates = [{"error": str(e)}]
         self.retriever.set_vector_scores(vector_scores)
 
-        candidates = self.retriever.retrieve(analysis, top_k=10)
+        candidates = self.retriever.retrieve(analysis, top_k=3)
         return candidates, AgentTraceStep(
             step="retrieve",
             status="completed",
@@ -120,37 +121,40 @@ class MatchOrchestrator:
             },
         )
 
+    def _compare_one(self, sketch_path: Path, candidate: RetrievalCandidate) -> _CompareDetail:
+        vision = self.comparator.compare(sketch_path, candidate.master)
+        vector_score = 0.0
+        for reason in candidate.reasons:
+            if reason.startswith("vector_sim="):
+                try:
+                    vector_score = float(reason.split("=", 1)[1])
+                except ValueError:
+                    pass
+                break
+        feedback_boost = sum(50.0 for r in candidate.reasons if r.startswith("feedback"))
+        combined = candidate.score / 100 * 0.35 + vision.score * 0.65
+        return _CompareDetail(
+            master=candidate.master,
+            retrieval_score=candidate.score,
+            vision_score=vision.score,
+            vector_score=vector_score,
+            combined_score=combined,
+            reasoning=vision.reasoning,
+            feedback_boost=min(feedback_boost, 50.0),
+        )
+
     def compare_candidates(
         self, sketch_path: Path, candidates: list[RetrievalCandidate]
     ) -> tuple[list[_CompareDetail], AgentTraceStep]:
-        details: list[_CompareDetail] = []
-        for candidate in candidates:
-            vision = self.comparator.compare(sketch_path, candidate.master)
-
-            # Extract vector_score from reasons (stored as string tag, read once here)
-            vector_score = 0.0
-            for reason in candidate.reasons:
-                if reason.startswith("vector_sim="):
-                    try:
-                        vector_score = float(reason.split("=", 1)[1])
-                    except ValueError:
-                        pass
-                    break
-
-            feedback_boost = sum(
-                50.0 for r in candidate.reasons if r.startswith("feedback")
-            )
-
-            combined = candidate.score / 100 * 0.35 + vision.score * 0.65
-            details.append(_CompareDetail(
-                master=candidate.master,
-                retrieval_score=candidate.score,
-                vision_score=vision.score,
-                vector_score=vector_score,
-                combined_score=combined,
-                reasoning=vision.reasoning,
-                feedback_boost=min(feedback_boost, 50.0),
-            ))
+        # Run all vision comparisons in parallel threads so LLM calls overlap
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                futures = [pool.submit(self._compare_one, sketch_path, c) for c in candidates]
+                details = [f.result() for f in futures]
+        else:
+            details = [self._compare_one(sketch_path, c) for c in candidates]
 
         details.sort(key=lambda d: d.combined_score, reverse=True)
         self._last_compare_details = details
@@ -158,7 +162,7 @@ class MatchOrchestrator:
         return details, AgentTraceStep(
             step="compare",
             status="completed",
-            message=f"Compared sketch against {len(details)} master drawings",
+            message=f"Compared sketch against {len(details)} master drawings (parallel)",
             data={
                 "comparisons": [
                     {
@@ -178,13 +182,49 @@ class MatchOrchestrator:
         analysis: SketchAnalysis,
         candidates: list[RetrievalCandidate],
         details: list[_CompareDetail],
-    ) -> tuple[MasterRecord, float, ScoreBreakdown, list[str], list[TopCandidate], AgentTraceStep]:
+    ) -> tuple[MasterRecord | None, float, ScoreBreakdown, list[str], list[TopCandidate], AgentTraceStep]:
         warnings: list[str] = []
         if not details:
             raise ValueError("No comparison results available")
 
         best = details[0]
         vision_score = best.vision_score
+
+        # Reject match entirely when no candidate scores high enough
+        no_match_threshold = getattr(self.settings, "no_match_vision_threshold", 0.55)
+        if vision_score < no_match_threshold:
+            top_candidates = [
+                TopCandidate(
+                    key=d.master.key,
+                    name=d.master.display_name,
+                    category=d.master.category,
+                    image_url=f"/api/v1/masters/{d.master.key}/image",
+                    combined_score=round(d.combined_score, 3),
+                    vision_score=round(d.vision_score, 3),
+                    reasoning=d.reasoning,
+                )
+                for d in details[:3]
+            ]
+            breakdown = ScoreBreakdown(
+                retrieval_score=round(best.retrieval_score, 1),
+                vector_score=round(best.vector_score, 3),
+                vision_score=round(vision_score, 3),
+                feedback_boost=best.feedback_boost,
+                combined_score=round(best.combined_score, 3),
+            )
+            self._last_score_breakdown = breakdown
+            return None, 0.0, breakdown, [], top_candidates, AgentTraceStep(
+                step="match",
+                status="no_match",
+                message=f"No matching master found — best vision score {vision_score:.0%} is below threshold {no_match_threshold:.0%}",
+                data={
+                    "master_key": None,
+                    "best_candidate": best.master.key,
+                    "vision_score": round(vision_score, 3),
+                    "threshold": no_match_threshold,
+                    "low_confidence": True,
+                },
+            )
 
         if vision_score < self.settings.min_vision_score:
             warnings.append(

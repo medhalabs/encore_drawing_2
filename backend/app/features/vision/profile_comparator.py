@@ -10,19 +10,22 @@ Sketch (first image): handwritten client drawing
 Master (second image): precise CAD machine drawing — {master_key} ({category}, {segment_count} segments)
 
 Think step by step:
-1. SKETCH SHAPE: Count the bends/segments. Describe the overall topology (e.g. Z-shape, U-channel, L-angle, hat/capping, step, open apron). Note left/right direction.
+1. SKETCH SHAPE: Count the bends/segments. Describe topology (e.g. Z-shape, U-channel, L-angle, hat/capping, step, open apron). Note which direction the profile faces (left/right/up/down) and leg lengths.
 2. MASTER SHAPE: Same analysis on the master drawing.
-3. COMPARE: Are these the SAME template? Rules:
-   - Same number of bends = necessary condition
-   - Rotated or mirrored (flipped) versions of the same shape = SAME
-   - Different topology (e.g. open vs closed, U-channel vs Z-shape) = DIFFERENT even if segment count matches
-   - A Gutter (U-channel open at top) and a Capping (closed hat shape) are NEVER the same even with equal segments
-   - Small handwriting differences in dimensions are irrelevant — topology only
+3. ORIENTATION CHECK: Is the sketch a MIRROR IMAGE or 180° ROTATION of the master? If so, treat as DIFFERENT — roofing profiles are direction-specific and a mirrored version is a different product.
+4. COMPARE — strict rules:
+   - Same segment count = necessary but NOT sufficient
+   - Mirrored or flipped = DIFFERENT (score ≤ 0.30)
+   - Different topology (open vs closed, U vs Z) = DIFFERENT
+   - A Gutter (U-channel open top) and a Capping (closed hat) are NEVER the same
+   - An Apron (flat step) and a Capping are NEVER the same
+   - Missing or extra legs = DIFFERENT even if overall count is close
+   - Only score ≥ 0.70 if you are confident the shapes are the same product
 
 Return ONLY valid JSON:
-{{"sketch_shape": "one phrase", "master_shape": "one phrase", "same_topology": true/false, "score": 0.0-1.0, "reasoning": "one sentence"}}
+{{"sketch_shape": "one phrase", "master_shape": "one phrase", "same_topology": true/false, "is_mirrored": true/false, "score": 0.0-1.0, "reasoning": "one sentence"}}
 
-Score guide: 1.0=identical topology, 0.75-0.95=same topology different proportions, 0.4-0.6=uncertain, 0.0-0.35=different topology"""
+Score guide: 0.85-1.0=same topology same orientation, 0.70-0.84=same topology minor proportion difference, 0.40-0.69=uncertain, 0.0-0.39=different topology or mirrored"""
 
 FEEDBACK_COMPARE_PROMPT = """Compare two handwritten/reference sketch images of metal flashing profiles.
 
@@ -54,9 +57,11 @@ class ProfileComparator:
         score = float(data.get("score", 0.0))
         if data.get("same_topology") is False:
             score = min(score, 0.35)
+        if data.get("is_mirrored") is True:
+            score = min(score, 0.30)
         reasoning = (
             f"sketch={data.get('sketch_shape','?')} master={data.get('master_shape','?')} "
-            f"same_topology={data.get('same_topology')} {data.get('reasoning','')}"
+            f"same_topology={data.get('same_topology')} mirrored={data.get('is_mirrored')} {data.get('reasoning','')}"
         )
         return CompareResult(
             master_key=master.key,

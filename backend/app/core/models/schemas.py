@@ -122,7 +122,8 @@ class TopCandidate(BaseModel):
 
 class MatchResult(BaseModel):
     job_id: str
-    matched_master: MatchedMaster
+    matched_master: MatchedMaster | None = None
+    no_match: bool = False
     confidence: float
     extracted_lengths: list[float]
     filled_json: dict[str, Any]

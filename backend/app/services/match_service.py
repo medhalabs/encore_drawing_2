@@ -78,6 +78,25 @@ class MatchService:
         await self._emit(step, on_step)
         warnings.extend(match_warnings)
 
+        # No match — return early with no_match=True
+        if master is None:
+            result = MatchResult(
+                job_id=job_id,
+                matched_master=None,
+                no_match=True,
+                confidence=0.0,
+                extracted_lengths=[],
+                filled_json={},
+                agent_trace=trace,
+                upload_image_url=f"/api/v1/match/{job_id}/upload",
+                warnings=["No matching master drawing found for this sketch."],
+                score_breakdown=breakdown,
+                top_candidates=top_candidates,
+            )
+            self._results[job_id] = result
+            await db_service.save_match(result, str(sketch_path))
+            return result
+
         lengths, extract_conf, step = self.orchestrator.extract_lengths(
             sketch_path, master, analysis
         )
@@ -112,6 +131,7 @@ class MatchService:
                 image_url=f"/api/v1/masters/{master.key}/image",
                 master_lengths=master.drawing.lengths,
             ),
+            no_match=False,
             confidence=round(min(confidence, 1.0), 3),
             extracted_lengths=lengths,
             filled_json=filled.to_encore_dict(),

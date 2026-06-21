@@ -10,10 +10,17 @@ Extract:
 1. segment_count: number of straight segments in the cross-section profile
 2. angles_estimate: list of bend angles between consecutive segments (best effort)
 3. handwritten_lengths: list of dimension numbers written on the sketch, in segment order left-to-right or top-to-bottom
-4. part_class_hint: e.g. Aprons, Gutters, Capping, RidgeValley, Soakers, FootMoulds, Misc
+4. part_class_hint: classify the profile shape into ONE of these categories:
+   - Gutters: U-channel or trough shape, open at top, collects rainwater
+   - Capping: hat/cap shape that sits over a ridge, usually symmetrical
+   - Aprons: flat step or apron shape, typically an L or Z profile against a wall
+   - RidgeValley: ridge or valley flashing with angled meeting faces
+   - Soakers: small step flashings around individual tiles
+   - FootMoulds: base/foot mould profiles
+   - Misc: anything that doesn't fit above
 5. fold_hints: any safety fold or hem annotations
-6. confidence: 0.0 to 1.0 how confident you are
-7. description: brief description of the profile shape
+6. confidence: 0.0 to 1.0 how confident you are in segment count and category
+7. description: brief description of the profile shape including orientation (e.g. "Z-profile facing right, unequal legs")
 
 Return ONLY valid JSON with keys: segment_count, angles_estimate, handwritten_lengths, part_class_hint, fold_hints, confidence, description
 All lengths should be numeric (mm). If unreadable, use empty list for handwritten_lengths."""

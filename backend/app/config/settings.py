@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     retrieval_vector_weight: float = 0.35
     retrieval_rule_weight: float = 0.65
     vector_search_top_k: int = 20
+    match_top_k: int = 3
+    analyzer_consensus_runs: int = 1
 
     master_drawings_path: str = "../training_testing_datasets/Training/Encore_master_drawings"
     feedback_dir: str = "../training_testing_datasets/feedback"
@@ -31,7 +33,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6377/0"
     redis_cache_ttl_seconds: int = 86400
 
-    min_vision_score: float = 0.65
+    min_vision_score: float = 0.72
+    no_match_vision_threshold: float = 0.55
     feedback_image_match_threshold: float = 0.72
     feedback_image_boost: float = 60.0
     wrong_master_penalty: float = 35.0
