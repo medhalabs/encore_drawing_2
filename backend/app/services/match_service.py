@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
@@ -6,6 +7,7 @@ from typing import Any
 
 from app.core.models.schemas import AgentTraceStep, MatchResult, MatchedMaster
 from app.features.agent.orchestrator import MatchOrchestrator
+from app.features.classifier.efficientnet import EfficientNetClassifier
 from app.features.db.database_service import db_service
 from app.features.masters.catalog import MasterCatalog
 from app.features.matching.json_filler import fill_master_json
@@ -14,12 +16,21 @@ from app.config.settings import Settings
 
 OnStepCallback = Callable[[AgentTraceStep], Awaitable[None]]
 
+logger = logging.getLogger(__name__)
+
 
 class MatchService:
-    def __init__(self, settings: Settings, catalog: MasterCatalog, orchestrator: MatchOrchestrator):
+    def __init__(
+        self,
+        settings: Settings,
+        catalog: MasterCatalog,
+        orchestrator: MatchOrchestrator,
+        classifier: EfficientNetClassifier | None = None,
+    ):
         self.settings = settings
         self.catalog = catalog
         self.orchestrator = orchestrator
+        self.classifier = classifier
         self._results: dict[str, MatchResult] = {}
 
     def save_upload(self, filename: str, content: bytes) -> Path:
@@ -56,27 +67,65 @@ class MatchService:
         )
         await self._emit(upload_step, on_step)
 
-        analysis, step = self.orchestrator.analyze_sketch(sketch_path)
-        trace.append(step)
-        await self._emit(step, on_step)
+        # ── Fast path: EfficientNet classifier ─────────────────────────
+        fast_master = None
+        fast_confidence = 0.0
+        if self.classifier is not None:
+            clf_result = self.classifier.predict(sketch_path)
+            if self.classifier.is_confident(clf_result):
+                fast_master = self.catalog.get_by_key(clf_result.master_key)
+                fast_confidence = clf_result.confidence
 
-        candidates, step = await self.orchestrator.retrieve_candidates(sketch_path, analysis)
-        trace.append(step)
-        await self._emit(step, on_step)
+        if fast_master is not None:
+            clf_step = AgentTraceStep(
+                step="classify",
+                status="completed",
+                message=f"EfficientNet matched {fast_master.key} (confidence {fast_confidence:.0%}) — skipping LLM compare",
+                data={"master_key": fast_master.key, "confidence": fast_confidence, "source": "efficientnet"},
+            )
+            trace.append(clf_step)
+            await self._emit(clf_step, on_step)
 
-        if not candidates:
-            raise ValueError("No master drawings found in catalog")
+            # Still run analyze so we get handwritten_lengths for extraction
+            analysis, step = self.orchestrator.analyze_sketch(sketch_path)
+            trace.append(step)
+            await self._emit(step, on_step)
 
-        comparisons, step = self.orchestrator.compare_candidates(sketch_path, candidates)
-        trace.append(step)
-        await self._emit(step, on_step)
+            master = fast_master
+            confidence = fast_confidence
+            from app.core.models.schemas import ScoreBreakdown
+            breakdown = ScoreBreakdown(
+                retrieval_score=0.0,
+                vector_score=0.0,
+                vision_score=fast_confidence,
+                feedback_boost=0.0,
+                combined_score=fast_confidence,
+            )
+            top_candidates = []
+            warnings = []
+        else:
+            # ── Full LLM path ───────────────────────────────────────────
+            analysis, step = self.orchestrator.analyze_sketch(sketch_path)
+            trace.append(step)
+            await self._emit(step, on_step)
 
-        master, confidence, breakdown, match_warnings, top_candidates, step = self.orchestrator.select_master(
-            analysis, candidates, comparisons
-        )
-        trace.append(step)
-        await self._emit(step, on_step)
-        warnings.extend(match_warnings)
+            candidates, step = await self.orchestrator.retrieve_candidates(sketch_path, analysis)
+            trace.append(step)
+            await self._emit(step, on_step)
+
+            if not candidates:
+                raise ValueError("No master drawings found in catalog")
+
+            comparisons, step = await self.orchestrator.compare_candidates(sketch_path, candidates)
+            trace.append(step)
+            await self._emit(step, on_step)
+
+            master, confidence, breakdown, match_warnings, top_candidates, step = self.orchestrator.select_master(
+                analysis, candidates, comparisons
+            )
+            trace.append(step)
+            await self._emit(step, on_step)
+            warnings.extend(match_warnings)
 
         # No match — return early with no_match=True
         if master is None:
@@ -160,6 +209,7 @@ class MatchService:
                 result = await self.process_match(sketch_path, original_filename, on_step=on_step)
                 await queue.put({"type": "result", "payload": result.model_dump()})
             except Exception as e:
+                logger.exception("Match pipeline failed for %s", original_filename)
                 await queue.put({"type": "error", "payload": {"detail": str(e)}})
             finally:
                 await queue.put(None)

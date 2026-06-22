@@ -1,12 +1,15 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import feedback, health, masters, match
+from app.api.routes import feedback, health, masters, match, training
 from app.config.settings import get_settings
 from app.features.agent.orchestrator import MatchOrchestrator
 from app.features.cache import redis_cache
+from app.features.classifier.efficientnet import EfficientNetClassifier
+from app.features.classifier.retrain_service import RetrainService
 from app.features.db.database_service import db_service
 from app.features.embeddings.service import EmbeddingService
 from app.features.feedback.store import FeedbackStore
@@ -29,7 +32,14 @@ embedding_service = EmbeddingService(settings, ollama, catalog)
 orchestrator = MatchOrchestrator(
     settings, analyzer, retriever, comparator, ollama, feedback_store, embedding_service
 )
-match_service = MatchService(settings, catalog, orchestrator)
+
+# EfficientNet classifier — builds label index from all master keys (originals + mirrors)
+_model_dir = Path(__file__).resolve().parents[1] / "data" / "models"
+_label_index: list[str] = []  # populated after catalog.load()
+classifier = EfficientNetClassifier(_model_dir, _label_index)
+retrain_service = RetrainService(classifier, settings.master_drawings_dir, settings.feedback_path)
+
+match_service = MatchService(settings, catalog, orchestrator, classifier=classifier)
 feedback_service = FeedbackService(feedback_store, match_service)
 
 
@@ -44,6 +54,19 @@ async def lifespan(app: FastAPI):
     settings.upload_path.mkdir(parents=True, exist_ok=True)
     catalog.load()
     feedback_store.load()
+
+    # Populate label index from catalog (must happen after catalog.load())
+    all_keys = [m.key for m in catalog.masters]
+    classifier._label_index = sorted(all_keys)
+    classifier._key_to_idx = {k: i for i, k in enumerate(classifier._label_index)}
+
+    # Load saved weights (uses label_index from training, may differ from current catalog order)
+    classifier.load_if_ready()
+    retrain_service.update_class_counts()
+
+    # If no weights exist yet, kick off an initial training run in background
+    if not list(_model_dir.glob("efficientnet_v*.pt")):
+        retrain_service.retrain_now()
 
     try:
         await redis_cache.init_redis(settings)
@@ -80,3 +103,4 @@ app.include_router(health.router, prefix="/api/v1")
 app.include_router(masters.router, prefix="/api/v1")
 app.include_router(match.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
+app.include_router(training.router, prefix="/api/v1")

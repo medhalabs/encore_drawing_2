@@ -6,10 +6,11 @@ from app.features.ollama.client import OllamaService
 
 ANALYZE_PROMPT = """Analyze this handwritten roofing/flashing profile sketch image.
 
-Extract:
+Extract ALL of the following in ONE pass:
+
 1. segment_count: number of straight segments in the cross-section profile
 2. angles_estimate: list of bend angles between consecutive segments (best effort)
-3. handwritten_lengths: list of dimension numbers written on the sketch, in segment order left-to-right or top-to-bottom
+3. handwritten_lengths: ALL dimension numbers written on the sketch, in drawing order (left-to-right or top-to-bottom). Read EVERY number you can see — this is critical.
 4. part_class_hint: classify the profile shape into ONE of these categories:
    - Gutters: U-channel or trough shape, open at top, collects rainwater
    - Capping: hat/cap shape that sits over a ridge, usually symmetrical
@@ -23,12 +24,7 @@ Extract:
 7. description: brief description of the profile shape including orientation (e.g. "Z-profile facing right, unequal legs")
 
 Return ONLY valid JSON with keys: segment_count, angles_estimate, handwritten_lengths, part_class_hint, fold_hints, confidence, description
-All lengths should be numeric (mm). If unreadable, use empty list for handwritten_lengths."""
-
-EXTRACT_LENGTHS_PROMPT = """Read the handwritten dimension numbers on this sketch image.
-The profile has {segment_count} segments. Return ONLY JSON:
-{{"handwritten_lengths": [number, ...], "confidence": 0.0-1.0}}
-Order lengths in drawing order. Use integers or decimals as written."""
+All lengths must be numeric (mm values). If a number is unreadable write 0. Never return an empty handwritten_lengths list if numbers are visible."""
 
 
 def _parse_analysis(data: dict) -> SketchAnalysis:
@@ -69,13 +65,15 @@ class SketchAnalyzer:
         self.consensus_runs = consensus_runs
 
     def analyze(self, sketch_path: Path) -> SketchAnalysis:
-        # Run analysis multiple times and merge — reduces LLM noise on angles + segment count
+        # Use the fast analyze model (gemma3:4b) — speed matters here, accuracy comes from compare step
+        analyze_model = getattr(self.ollama.settings, "ollama_analyze_model", "")
         results: list[SketchAnalysis] = []
         for _ in range(self.consensus_runs):
             data = self.ollama.chat_vision_json(
                 ANALYZE_PROMPT,
                 [sketch_path],
                 system="You are an expert at reading handwritten engineering sketches for metal flashing profiles.",
+                model=analyze_model,
             )
             results.append(_parse_analysis(data))
 
@@ -99,7 +97,16 @@ class SketchAnalyzer:
         )
 
     def extract_lengths(self, sketch_path: Path, segment_count: int) -> tuple[list[float], float]:
-        prompt = EXTRACT_LENGTHS_PROMPT.format(segment_count=segment_count)
+        """
+        Re-reads lengths from sketch with the segment count as a hint.
+        Only called as a fallback when analyze() didn't return enough lengths.
+        Avoids a second LLM call if Redis cache already has the analyze result.
+        """
+        from app.features.cache import redis_cache
+        prompt = f"""Read the handwritten dimension numbers on this sketch image.
+The profile has {segment_count} segments. Return ONLY JSON:
+{{"handwritten_lengths": [number, ...], "confidence": 0.0-1.0}}
+Order lengths in drawing order. Use integers or decimals as written. Every segment must have a length."""
         data = self.ollama.chat_vision_json(prompt, [sketch_path])
         lengths = [float(x) for x in data.get("handwritten_lengths", [])]
         confidence = float(data.get("confidence", 0.0))

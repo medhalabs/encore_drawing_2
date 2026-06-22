@@ -25,16 +25,29 @@ export interface MasterSummary {
   image_url: string;
 }
 
+export interface MatchedMaster {
+  key: string;
+  id: string;
+  name: string;
+  category: string;
+  image_url: string;
+  master_lengths: number[];
+}
+
+export interface TopCandidate {
+  key: string;
+  name: string;
+  category: string;
+  image_url: string;
+  combined_score: number;
+  vision_score: number;
+  reasoning: string;
+}
+
 export interface MatchResult {
   job_id: string;
-  matched_master: {
-    key: string;
-    id: string;
-    name: string;
-    category: string;
-    image_url: string;
-    master_lengths: number[];
-  };
+  matched_master: MatchedMaster | null;
+  no_match?: boolean;
   confidence: number;
   extracted_lengths: number[];
   filled_json: Record<string, unknown>;
@@ -42,6 +55,7 @@ export interface MatchResult {
   upload_image_url: string;
   warnings: string[];
   score_breakdown?: ScoreBreakdown | null;
+  top_candidates?: TopCandidate[];
 }
 
 export interface FeedbackResponse {
@@ -102,7 +116,73 @@ export async function submitFeedback(payload: {
   return response.json();
 }
 
+// ── Training API ──────────────────────────────────────────────────────────────
+
+export interface ClassStat {
+  key: string;
+  category: string;
+  name: string;
+  master_count: number;
+  correction_count: number;
+  total: number;
+}
+
+export interface TrainingStatus {
+  is_training: boolean;
+  model_version: string | null;
+  total_classes: number;
+  total_training_images: number;
+  classes: ClassStat[];
+}
+
+export interface UploadResult {
+  saved: number;
+  skipped: number;
+  master_key: string;
+  filenames: string[];
+}
+
+export interface RetrainResponse {
+  triggered: boolean;
+  message: string;
+  total_training_images: number;
+}
+
+export async function getTrainingStatus(): Promise<TrainingStatus> {
+  const res = await fetch(apiUrl("/api/v1/training/status"));
+  if (!res.ok) throw new Error("Failed to load training status");
+  return res.json();
+}
+
+export async function uploadTrainingImages(
+  masterKey: string,
+  files: File[]
+): Promise<UploadResult> {
+  const form = new FormData();
+  form.append("master_key", masterKey);
+  for (const f of files) form.append("files", f);
+  const res = await fetch(apiUrl("/api/v1/training/upload"), {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+    throw new Error(err.detail || "Upload failed");
+  }
+  return res.json();
+}
+
+export async function triggerRetrain(): Promise<RetrainResponse> {
+  const res = await fetch(apiUrl("/api/v1/training/retrain"), { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Retrain failed" }));
+    throw new Error(err.detail || "Retrain failed");
+  }
+  return res.json();
+}
+
 export function downloadJson(result: MatchResult): void {
+  if (!result.matched_master) return;
   const blob = new Blob([JSON.stringify(result.filled_json, null, 2)], {
     type: "application/json",
   });
@@ -148,6 +228,7 @@ export async function matchDrawingStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let finalResult: MatchResult | null = null;
+  let streamError: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -174,11 +255,15 @@ export async function matchDrawingStream(
         finalResult = parsed as MatchResult;
         handlers.onResult(finalResult);
       } else if (eventType === "error") {
-        handlers.onError(parsed.detail || "Match failed");
+        streamError = parsed.detail || "Match failed";
+        handlers.onError(streamError);
       }
     }
   }
 
+  if (streamError) {
+    throw new Error(streamError);
+  }
   if (!finalResult) {
     throw new Error("Stream ended without a result");
   }

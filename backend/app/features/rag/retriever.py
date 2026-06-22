@@ -58,52 +58,50 @@ class MasterRetriever:
     def _feedback_boost(self, analysis: SketchAnalysis, master_key: str) -> tuple[float, list[str]]:
         boost = 0.0
         reasons: list[str] = []
+        master = self.catalog.get_by_key(master_key)
         for entry in self._feedback_entries:
             if entry.master_key != master_key:
                 continue
             if entry.segment_count == analysis.segment_count:
                 boost = max(boost, self.FEEDBACK_BOOST)
                 reasons.append(f"feedback_segment_match:{entry.feedback_id[:8]}")
-            # Use flip-invariant angle distance via fingerprint
-            master = self.catalog.get_by_key(master_key)
-            if master:
-                angle_dist = master.fingerprint.angle_distance(analysis.angles_estimate)
-                if angle_dist < 25:
+            # Leg ratio match instead of unreliable angle match
+            if master and analysis.handwritten_lengths:
+                ratio_dist = master.fingerprint.length_ratio_distance(analysis.handwritten_lengths)
+                if ratio_dist < 0.20:
                     boost = max(boost, self.FEEDBACK_BOOST * 0.8)
-                    reasons.append(f"feedback_angle_match:{entry.feedback_id[:8]}")
+                    reasons.append(f"feedback_ratio_match:{entry.feedback_id[:8]}")
         return boost, reasons
 
     def _fingerprint_score(self, master: MasterRecord, analysis: SketchAnalysis) -> tuple[float, list[str]]:
-        """Deterministic score using exact master geometry — never relies on LLM angle guessing."""
+        """
+        Deterministic score using master geometry.
+        Angles from handwritten sketches are unreliable — angle scoring is disabled.
+        Leg ratio (short:long proportions) is the primary fingerprint signal.
+        """
         fp = master.fingerprint
         score = 0.0
         reasons: list[str] = []
 
-        # Angle distance (flip-invariant)
-        if analysis.angles_estimate:
-            angle_dist = fp.angle_distance(analysis.angles_estimate)
-            if angle_dist < 999:
-                angle_score = max(0.0, 30.0 - angle_dist)
-                score += angle_score
-                if angle_dist < 15:
-                    reasons.append(f"fp_angle_dist={angle_dist:.1f}")
-                elif angle_dist < 30:
-                    reasons.append(f"fp_angle_close={angle_dist:.1f}")
-
-        # Length ratio distance (scale-invariant)
+        # Leg ratio distance — scale-invariant, reliable from handwriting (primary signal, weight=40)
         if analysis.handwritten_lengths:
             ratio_dist = fp.length_ratio_distance(analysis.handwritten_lengths)
             if ratio_dist < 999:
-                ratio_score = max(0.0, 20.0 - ratio_dist * 40)
+                # Full 40 pts at ratio_dist=0, zero at ratio_dist=0.5
+                ratio_score = max(0.0, 40.0 * (1.0 - ratio_dist / 0.5))
                 score += ratio_score
-                if ratio_dist < 0.15:
-                    reasons.append(f"fp_ratio_dist={ratio_dist:.2f}")
+                if ratio_dist < 0.10:
+                    reasons.append(f"fp_ratio_excellent={ratio_dist:.2f}")
+                elif ratio_dist < 0.25:
+                    reasons.append(f"fp_ratio_good={ratio_dist:.2f}")
+                elif ratio_dist < 0.40:
+                    reasons.append(f"fp_ratio_close={ratio_dist:.2f}")
 
-        # Fold presence match
+        # Fold presence match (secondary signal, weight=10)
         has_fold_hint = bool(analysis.fold_hints and analysis.fold_hints.strip())
         master_has_fold = fp.has_start_fold or fp.has_end_fold
         if has_fold_hint == master_has_fold:
-            score += 5.0
+            score += 10.0
             if has_fold_hint:
                 reasons.append("fp_fold_match")
 

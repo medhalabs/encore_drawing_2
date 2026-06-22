@@ -13,8 +13,8 @@ class DatabaseRepository:
         existing = await self.session.get(MatchJob, result.job_id)
         payload = {
             "upload_path": upload_path,
-            "matched_master_key": result.matched_master.key,
-            "matched_encore_id": result.matched_master.id,
+            "matched_master_key": result.matched_master.key if result.matched_master else "",
+            "matched_encore_id": result.matched_master.id if result.matched_master else "",
             "confidence": result.confidence,
             "extracted_lengths": result.extracted_lengths,
             "filled_json": result.filled_json,

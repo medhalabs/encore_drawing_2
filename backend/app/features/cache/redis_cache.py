@@ -59,10 +59,16 @@ def cache_get_sync(key: str) -> dict | None:
     return json.loads(raw)
 
 
-def cache_set_sync(key: str, value: Any, ttl_seconds: int) -> None:
+def cache_set_sync(key: str, value: Any, ttl_seconds: int, image_paths: list | None = None) -> None:
     if _redis_sync is None:
         return
     _redis_sync.set(f"vision:{key}", json.dumps(value), ex=ttl_seconds)
+    # Store reverse index: image_hash → cache_key so we can invalidate by image
+    if image_paths:
+        for p in image_paths:
+            img_hash = hash_file(p)
+            _redis_sync.sadd(f"img_keys:{img_hash}", f"vision:{key}")
+            _redis_sync.expire(f"img_keys:{img_hash}", ttl_seconds)
 
 
 def build_embed_cache_key(model: str, text: str) -> str:
@@ -82,6 +88,23 @@ def cache_set_embed_sync(key: str, value: list[float], ttl_seconds: int) -> None
     if _redis_sync is None:
         return
     _redis_sync.set(f"embed:{key}", json.dumps(value), ex=ttl_seconds)
+
+
+def invalidate_image_cache(image_path) -> int:
+    """
+    Delete all vision cache entries that were built from a given image file.
+    Called when a user submits a correction so the next upload of the same
+    sketch goes through the full pipeline instead of returning a stale result.
+    """
+    if _redis_sync is None:
+        return 0
+    img_hash = hash_file(image_path)
+    index_key = f"img_keys:{img_hash}"
+    cache_keys = _redis_sync.smembers(index_key)
+    if not cache_keys:
+        return 0
+    deleted = _redis_sync.delete(*cache_keys, index_key)
+    return deleted
 
 
 async def ping_redis() -> bool:

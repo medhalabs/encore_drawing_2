@@ -99,6 +99,20 @@ def load_master_record(category: str, json_path: Path) -> MasterRecord | None:
     )
 
 
+def _make_mirror_record(original: MasterRecord) -> MasterRecord:
+    """Create a mirror-keyed record sharing the same JSON/drawing but pointing at the -mirror.png."""
+    mirror_image = original.image_path.parent / f"{original.basename}-mirror.png"
+    mirror_basename = f"{original.basename}-mirror"
+    return MasterRecord(
+        key=f"{original.category}/{mirror_basename}",
+        category=original.category,
+        basename=mirror_basename,
+        json_path=original.json_path,
+        image_path=mirror_image,
+        drawing=original.drawing,
+    )
+
+
 def load_all_masters(root_dir: Path) -> list[MasterRecord]:
     masters: list[MasterRecord] = []
     if not root_dir.exists():
@@ -111,5 +125,8 @@ def load_all_masters(root_dir: Path) -> list[MasterRecord]:
             record = load_master_record(category_dir.name, json_path)
             if record:
                 masters.append(record)
+                mirror_image = json_path.parent / f"{record.basename}-mirror.png"
+                if mirror_image.exists():
+                    masters.append(_make_mirror_record(record))
 
     return masters

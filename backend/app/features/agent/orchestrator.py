@@ -143,18 +143,19 @@ class MatchOrchestrator:
             feedback_boost=min(feedback_boost, 50.0),
         )
 
-    def compare_candidates(
+    async def compare_candidates(
         self, sketch_path: Path, candidates: list[RetrievalCandidate]
     ) -> tuple[list[_CompareDetail], AgentTraceStep]:
-        # Run all vision comparisons in parallel threads so LLM calls overlap
+        # Run all vision comparisons in parallel — each LLM call runs in its own thread
+        # so they overlap on the network I/O instead of waiting serially.
+        # gemma4:31b-cloud handles concurrent requests; capped at 3 workers (top_k=3).
         loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                futures = [pool.submit(self._compare_one, sketch_path, c) for c in candidates]
-                details = [f.result() for f in futures]
-        else:
-            details = [self._compare_one(sketch_path, c) for c in candidates]
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(self._compare_one, sketch_path, c) for c in candidates]
+            details = await loop.run_in_executor(
+                None, lambda: [f.result() for f in concurrent.futures.as_completed(futures)]
+            )
 
         details.sort(key=lambda d: d.combined_score, reverse=True)
         self._last_compare_details = details
@@ -272,19 +273,26 @@ class MatchOrchestrator:
         self, sketch_path: Path, master: MasterRecord, analysis: SketchAnalysis
     ) -> tuple[list[float], float, AgentTraceStep]:
         segment_count = master.segment_count
+
+        # Use lengths already captured during analyze() — avoids a second LLM call
+        if analysis.handwritten_lengths and len(analysis.handwritten_lengths) == segment_count:
+            return analysis.handwritten_lengths, analysis.confidence, AgentTraceStep(
+                step="extract",
+                status="completed",
+                message=f"Extracted {len(analysis.handwritten_lengths)} lengths from analyze step (no extra LLM call)",
+                data={"extracted_lengths": analysis.handwritten_lengths, "confidence": analysis.confidence, "source": "analyze"},
+            )
+
+        # Fallback: second LLM call with segment count hint when analyze didn't get the right count
         lengths, confidence = self.analyzer.extract_lengths(sketch_path, segment_count)
 
         if not lengths and analysis.handwritten_lengths:
             lengths = analysis.handwritten_lengths
             confidence = analysis.confidence
 
-        if len(lengths) != segment_count and analysis.handwritten_lengths:
-            if len(analysis.handwritten_lengths) == segment_count:
-                lengths = analysis.handwritten_lengths
-
         return lengths, confidence, AgentTraceStep(
             step="extract",
             status="completed",
-            message=f"Extracted {len(lengths)} dimension values",
-            data={"extracted_lengths": lengths, "confidence": confidence},
+            message=f"Extracted {len(lengths)} dimension values (fallback LLM call)",
+            data={"extracted_lengths": lengths, "confidence": confidence, "source": "extract_fallback"},
         )

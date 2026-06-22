@@ -12,18 +12,31 @@ class FeedbackService:
     async def submit(self, request: FeedbackRequest) -> FeedbackResponse:
         previous_key = ""
         result = self.match_service.get_result(request.job_id)
-        if result:
+        if result and result.matched_master:
             previous_key = result.matched_master.key
 
         entry, filled_json = self.store.save_correction(request, previous_key)
         await db_service.save_correction(entry, filled_json)
 
-        from app.main import retriever
+        # Invalidate Redis vision cache for this sketch so the corrected
+        # master is used if the same image is uploaded again
+        upload_path = self.match_service.settings.upload_path
+        for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+            candidate = upload_path / f"{request.job_id}{ext}"
+            if candidate.exists():
+                from app.features.cache import redis_cache
+                redis_cache.invalidate_image_cache(candidate)
+                break
+
+        from app.main import retriever, retrain_service
         entries = await db_service.load_corrections()
         if entries:
             retriever.set_feedback_entries(entries)
         else:
             retriever.set_feedback_entries(self.store.entries)
+
+        # Trigger EfficientNet retrain every N new corrections
+        retrain_service.maybe_retrain(len(self.store.entries))
 
         return FeedbackResponse(entry=entry, filled_json=filled_json)
 

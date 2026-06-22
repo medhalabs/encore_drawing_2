@@ -1,0 +1,35 @@
+{
+  "_id": "69a108b0e52337e3663a0544",
+  "name": "apron-4",
+  "lengths": [
+    100.0,
+    595.0,
+    1085.0,
+    1100.0
+  ],
+  "angles": [
+    -90.0,
+    90.0,
+    30.0
+  ],
+  "direction": "Up",
+  "reverseColor": true,
+  "isTaper": false,
+  "farLengths": [],
+  "farAngles": [],
+  "nearLengths": [],
+  "nearAngles": [],
+  "partGroup": "Flashing",
+  "partClass": "Aprons",
+  "firstSegmentAngle": 90.0,
+  "flipH": false,
+  "flipV": false,
+  "startFoldType": null,
+  "startFoldDirection": null,
+  "startFoldLength": null,
+  "startFoldGap": null,
+  "endFoldType": null,
+  "endFoldDirection": null,
+  "endFoldLength": null,
+  "endFoldGap": null
+}

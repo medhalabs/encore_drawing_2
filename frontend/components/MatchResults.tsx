@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { MatchResult } from "@/lib/api";
-import { downloadJson } from "@/lib/api";
+import { apiUrl, downloadJson } from "@/lib/api";
 import SideBySideViewer from "./SideBySideViewer";
 import JsonPreview from "./JsonPreview";
 import CorrectionPanel from "./CorrectionPanel";
@@ -12,24 +12,159 @@ interface Props {
   onResultUpdate?: (updated: MatchResult) => void;
 }
 
+function ScoreBreakdownPanel({ result }: { result: MatchResult }) {
+  if (!result.score_breakdown) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm">
+      <h3 className="font-medium mb-3">Match score breakdown</h3>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div>
+          <p className="text-slate-500 text-xs">Retrieval</p>
+          <p className="font-medium">{result.score_breakdown.retrieval_score}</p>
+        </div>
+        <div>
+          <p className="text-slate-500 text-xs">Vector similarity</p>
+          <p className="font-medium">
+            {result.score_breakdown.vector_score != null
+              ? `${Math.round(result.score_breakdown.vector_score * 100)}%`
+              : "—"}
+          </p>
+        </div>
+        <div>
+          <p className="text-slate-500 text-xs">Vision shape</p>
+          <p
+            className={`font-medium ${result.score_breakdown.vision_score >= 0.65 ? "text-emerald-300" : "text-amber-300"}`}
+          >
+            {Math.round(result.score_breakdown.vision_score * 100)}%
+          </p>
+        </div>
+        <div>
+          <p className="text-slate-500 text-xs">Feedback boost</p>
+          <p className="font-medium">{result.score_breakdown.feedback_boost || "—"}</p>
+        </div>
+        <div>
+          <p className="text-slate-500 text-xs">Combined</p>
+          <p className="font-medium">{Math.round(result.score_breakdown.combined_score * 100)}%</p>
+        </div>
+      </div>
+      {result.score_breakdown.vision_score < 0.65 && (
+        <p className="text-amber-300 text-xs mt-3">
+          Vision shape match is below 65% — this match may be wrong. Use Correct this match.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function MatchResults({ result, onResultUpdate }: Props) {
   const [showCorrection, setShowCorrection] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const confidencePct = Math.round(result.confidence * 100);
+  const master = result.matched_master;
+  const noMatch = result.no_match || !master;
+
+  if (noMatch) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-semibold text-amber-200">No match found</h2>
+            <p className="text-slate-400 text-sm mt-1">
+              The sketch did not match any master drawing with sufficient confidence.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowCorrection(true)}
+            className="px-4 py-2 rounded-lg border border-slate-600 hover:border-slate-400 text-sm font-medium transition-colors"
+          >
+            Assign master manually
+          </button>
+        </div>
+
+        {result.warnings.length > 0 && (
+          <div className="rounded-lg border border-amber-800 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+            {result.warnings.map((w, i) => (
+              <p key={i}>⚠ {w}</p>
+            ))}
+          </div>
+        )}
+
+        <ScoreBreakdownPanel result={result} />
+
+        {result.top_candidates && result.top_candidates.length > 0 && (
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <h3 className="font-medium mb-3">Closest candidates</h3>
+            <div className="space-y-3">
+              {result.top_candidates.map((c) => (
+                <div
+                  key={c.key}
+                  className="flex items-center gap-4 rounded-lg border border-slate-800 bg-slate-950/50 p-3"
+                >
+                  <img
+                    src={apiUrl(c.image_url)}
+                    alt={c.name || c.key}
+                    className="h-16 w-16 object-contain rounded bg-slate-900"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">{c.name || c.key}</p>
+                    <p className="text-xs text-slate-400">
+                      {c.category} · {Math.round(c.combined_score * 100)}% combined ·{" "}
+                      {Math.round(c.vision_score * 100)}% vision
+                    </p>
+                    {c.reasoning && <p className="text-xs text-slate-500 mt-1">{c.reasoning}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {savedMessage && (
+          <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200">
+            {savedMessage}
+          </div>
+        )}
+
+        {showCorrection && (
+          <CorrectionPanel
+            result={result}
+            onCancel={() => setShowCorrection(false)}
+            onCorrected={(updated, message) => {
+              onResultUpdate?.(updated);
+              setSavedMessage(message);
+              setShowCorrection(false);
+            }}
+          />
+        )}
+
+        <div className="rounded-xl border border-slate-800 overflow-hidden">
+          <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 text-sm font-medium">Your Sketch</div>
+          <img
+            src={apiUrl(result.upload_image_url)}
+            alt="Uploaded sketch"
+            className="w-full h-64 object-contain bg-slate-950"
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold">{result.matched_master.name || result.matched_master.key}</h2>
+          <h2 className="text-2xl font-semibold">{master.name || master.key}</h2>
           <p className="text-slate-400 text-sm mt-1">
-            {result.matched_master.category} · ID {result.matched_master.id}
+            {master.category} · ID {master.id}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span
             className={`px-3 py-1 rounded-full text-sm font-medium ${
-              (result.score_breakdown?.vision_score ?? result.confidence) >= 0.65 ? "bg-emerald-900/50 text-emerald-300" : "bg-amber-900/50 text-amber-300"
+              (result.score_breakdown?.vision_score ?? result.confidence) >= 0.65
+                ? "bg-emerald-900/50 text-emerald-300"
+                : "bg-amber-900/50 text-amber-300"
             }`}
           >
             {confidencePct}% confidence
@@ -49,45 +184,7 @@ export default function MatchResults({ result, onResultUpdate }: Props) {
         </div>
       </div>
 
-      
-      {result.score_breakdown && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm">
-          <h3 className="font-medium mb-3">Match score breakdown</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <div>
-              <p className="text-slate-500 text-xs">Retrieval</p>
-              <p className="font-medium">{result.score_breakdown.retrieval_score}</p>
-            </div>
-            <div>
-              <p className="text-slate-500 text-xs">Vector similarity</p>
-              <p className="font-medium">
-                {result.score_breakdown.vector_score != null
-                  ? `${Math.round(result.score_breakdown.vector_score * 100)}%`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-slate-500 text-xs">Vision shape</p>
-              <p className={`font-medium ${result.score_breakdown.vision_score >= 0.65 ? "text-emerald-300" : "text-amber-300"}`}>
-                {Math.round(result.score_breakdown.vision_score * 100)}%
-              </p>
-            </div>
-            <div>
-              <p className="text-slate-500 text-xs">Feedback boost</p>
-              <p className="font-medium">{result.score_breakdown.feedback_boost || "—"}</p>
-            </div>
-            <div>
-              <p className="text-slate-500 text-xs">Combined</p>
-              <p className="font-medium">{Math.round(result.score_breakdown.combined_score * 100)}%</p>
-            </div>
-          </div>
-          {result.score_breakdown.vision_score < 0.65 && (
-            <p className="text-amber-300 text-xs mt-3">
-              Vision shape match is below 65% — this match may be wrong. Use Correct this match.
-            </p>
-          )}
-        </div>
-      )}
+      <ScoreBreakdownPanel result={result} />
 
       {savedMessage && (
         <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200">
@@ -117,8 +214,8 @@ export default function MatchResults({ result, onResultUpdate }: Props) {
 
       <SideBySideViewer
         uploadUrl={result.upload_image_url}
-        masterImageUrl={result.matched_master.image_url}
-        masterName={result.matched_master.name || result.matched_master.key}
+        masterImageUrl={master.image_url}
+        masterName={master.name || master.key}
       />
 
       <div className="rounded-xl border border-slate-800 overflow-hidden">
@@ -135,7 +232,7 @@ export default function MatchResults({ result, onResultUpdate }: Props) {
             {result.extracted_lengths.map((len, i) => (
               <tr key={i} className="border-b border-slate-800/50">
                 <td className="px-4 py-2">{i + 1}</td>
-                <td className="px-4 py-2 text-slate-400">{result.matched_master.master_lengths[i] ?? "—"}</td>
+                <td className="px-4 py-2 text-slate-400">{master.master_lengths[i] ?? "—"}</td>
                 <td className="px-4 py-2 font-medium text-emerald-300">{len}</td>
               </tr>
             ))}

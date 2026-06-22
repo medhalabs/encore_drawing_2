@@ -12,10 +12,9 @@ from app.features.cache import redis_cache
 class OllamaService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = Client(
-            host=settings.ollama_base_url,
-            headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
-        )
+        auth_headers = {"Authorization": f"Bearer {settings.ollama_api_key}"}
+        self.client = Client(host=settings.ollama_base_url, headers=auth_headers)
+        self.embed_client = Client(host=settings.ollama_embed_base_url, headers=auth_headers)
 
     @staticmethod
     def _image_to_base64(path: Path) -> str:
@@ -45,20 +44,20 @@ class OllamaService:
         )
         return response["message"]["content"]
 
-    def chat_vision(self, prompt: str, image_paths: list[Path], system: str = "") -> str:
+    def chat_vision(self, prompt: str, image_paths: list[Path], system: str = "", model: str = "") -> str:
         images = [self._image_to_base64(p) for p in image_paths]
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt, "images": images})
         response = self.client.chat(
-            model=self.settings.ollama_vision_model,
+            model=model or self.settings.ollama_vision_model,
             messages=messages,
             stream=False,
         )
         return response["message"]["content"]
 
-    def chat_vision_json(self, prompt: str, image_paths: list[Path], system: str = "") -> dict:
+    def chat_vision_json(self, prompt: str, image_paths: list[Path], system: str = "", model: str = "") -> dict:
         cache_key = redis_cache.build_vision_cache_key(prompt, image_paths)
         cached = redis_cache.cache_get_sync(cache_key)
         if cached is not None:
@@ -66,9 +65,9 @@ class OllamaService:
         last_err: Exception | None = None
         for attempt in range(3):
             try:
-                content = self.chat_vision(prompt, image_paths, system)
+                content = self.chat_vision(prompt, image_paths, system, model=model)
                 parsed = self._parse_json(content)
-                redis_cache.cache_set_sync(cache_key, parsed, self.settings.redis_cache_ttl_seconds)
+                redis_cache.cache_set_sync(cache_key, parsed, self.settings.redis_cache_ttl_seconds, image_paths)
                 return parsed
             except (json.JSONDecodeError, ValueError) as e:
                 last_err = e
@@ -83,7 +82,7 @@ class OllamaService:
         cached = redis_cache.cache_get_embed_sync(cache_key)
         if cached is not None:
             return cached
-        response = self.client.embed(model=self.settings.ollama_embed_model, input=text)
+        response = self.embed_client.embed(model=self.settings.ollama_embed_model, input=text)
         embedding = response["embeddings"][0]
         redis_cache.cache_set_embed_sync(
             cache_key, embedding, self.settings.redis_cache_ttl_seconds

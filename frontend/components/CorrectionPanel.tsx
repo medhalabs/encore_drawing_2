@@ -20,7 +20,9 @@ async function fetchMasterTemplateLengths(masterKey: string): Promise<number[]> 
 
 export default function CorrectionPanel({ result, onCorrected, onCancel }: Props) {
   const [masters, setMasters] = useState<MasterSummary[]>([]);
-  const [masterKey, setMasterKey] = useState(result.matched_master.key);
+  const [masterKey, setMasterKey] = useState(
+    result.matched_master?.key ?? result.top_candidates?.[0]?.key ?? ""
+  );
   const [lengths, setLengths] = useState<number[]>([...result.extracted_lengths]);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -59,15 +61,18 @@ export default function CorrectionPanel({ result, onCorrected, onCancel }: Props
         ...result,
         matched_master: {
           key: masterKey,
-          id: master?.id ?? result.matched_master.id,
+          id: master?.id ?? result.matched_master?.id ?? "",
           name: master?.name || masterKey.split("/")[1],
           category: master?.category ?? masterKey.split("/")[0],
           image_url: `/api/v1/masters/${masterKey}/image`,
-          master_lengths: templateLengths.length ? templateLengths : result.matched_master.master_lengths,
+          master_lengths: templateLengths.length
+            ? templateLengths
+            : (result.matched_master?.master_lengths ?? []),
         },
         extracted_lengths: lengths,
         filled_json: response.filled_json,
         confidence: 1,
+        no_match: false,
       };
       onCorrected(updated, response.message);
     } catch (e) {
