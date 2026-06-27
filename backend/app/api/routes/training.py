@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/training", tags=["training"])
@@ -168,6 +169,179 @@ def trigger_retrain():
         message=f"Retrain started in background on {len(training_data)} images (10 epochs). Hot-swaps when done.",
         total_training_images=len(training_data),
     )
+
+
+class TrainingImage(BaseModel):
+    feedback_id: str
+    master_key: str
+    filename: str
+    created_at: str
+    image_url: str
+
+
+@router.get("/images")
+def list_training_images(master_key: str):
+    """Return all uploaded training images for a given master key."""
+    _, _, _, settings = _get_deps()
+    manifest = settings.feedback_path / "manifest.jsonl"
+    results: list[dict] = []
+    if not manifest.exists():
+        return results
+    for line in manifest.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:
+            continue
+        if entry.get("master_key") != master_key:
+            continue
+        fid = entry.get("feedback_id", "")
+        img_path = entry.get("image_path", "")
+        full_path = settings.feedback_path / img_path if img_path else None
+        if not full_path or not full_path.exists():
+            continue
+        results.append({
+            "feedback_id": fid,
+            "master_key": master_key,
+            "filename": Path(img_path).name,
+            "created_at": entry.get("created_at", ""),
+            "image_url": f"/api/v1/training/images/{fid}/file",
+        })
+    return results
+
+
+@router.get("/images/{feedback_id}/file")
+def get_training_image_file(feedback_id: str):
+    """Serve the raw image file for a training image."""
+    _, _, _, settings = _get_deps()
+    manifest = settings.feedback_path / "manifest.jsonl"
+    if not manifest.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    for line in manifest.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:
+            continue
+        if entry.get("feedback_id") != feedback_id:
+            continue
+        img_path = entry.get("image_path", "")
+        full_path = settings.feedback_path / img_path if img_path else None
+        if full_path and full_path.exists():
+            media = "image/png" if full_path.suffix == ".png" else "image/jpeg"
+            return FileResponse(str(full_path), media_type=media)
+    raise HTTPException(status_code=404, detail="Training image not found")
+
+
+@router.delete("/images/{feedback_id}")
+def delete_training_image(feedback_id: str):
+    """Remove a training image from the manifest and disk."""
+    _, _, retrain_service, settings = _get_deps()
+    manifest_path = settings.feedback_path / "manifest.jsonl"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    lines = manifest_path.read_text().splitlines()
+    kept: list[str] = []
+    deleted_entry: dict | None = None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except Exception:
+            kept.append(line)
+            continue
+        if entry.get("feedback_id") == feedback_id:
+            deleted_entry = entry
+        else:
+            kept.append(line)
+
+    if deleted_entry is None:
+        raise HTTPException(status_code=404, detail="Training image not found")
+
+    # Rewrite manifest atomically
+    tmp = manifest_path.with_suffix(".jsonl.tmp")
+    tmp.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    tmp.replace(manifest_path)
+
+    # Delete file from disk
+    img_path = deleted_entry.get("image_path", "")
+    if img_path:
+        full_path = settings.feedback_path / img_path
+        if full_path.exists():
+            full_path.unlink()
+
+    # Refresh class counts
+    retrain_service.update_class_counts()
+    return {"deleted": feedback_id}
+
+
+@router.post("/stop")
+def stop_training():
+    """Signal the running retrain to stop after the current epoch."""
+    _, classifier, _, _ = _get_deps()
+    was_training = classifier.stop_training()
+    if was_training:
+        return {"stopped": True, "message": "Stop signal sent — training will halt after the current epoch."}
+    return {"stopped": False, "message": "No training is currently running."}
+
+
+@router.post("/restart", response_model=RetrainResponse)
+def restart_training():
+    """Stop any running retrain and immediately start a fresh one."""
+    _, classifier, retrain_service, _ = _get_deps()
+
+    # Signal stop if running (new retrain will start right after)
+    classifier.stop_training()
+
+    # Small wait to let the stop propagate before the new thread starts
+    import time
+    for _ in range(20):
+        if not classifier._training:
+            break
+        time.sleep(0.1)
+
+    training_data = retrain_service.build_training_set()
+    retrain_service.update_class_counts()
+    classifier._stop_event.clear()
+    classifier.retrain_async(training_data)
+
+    return RetrainResponse(
+        triggered=True,
+        message=f"Restarted training on {len(training_data)} images (10 epochs).",
+        total_training_images=len(training_data),
+    )
+
+
+@router.get("/progress")
+def training_progress():
+    """Return live epoch-by-epoch training progress."""
+    _, classifier, _, _ = _get_deps()
+    current = classifier._epoch_current
+    total = classifier._epoch_total
+    losses = list(classifier._epoch_losses)
+    is_training = classifier._training
+    images_done = classifier._images_processed
+    images_per_epoch = classifier._images_per_epoch
+    total_images = classifier._training_images_count
+    percent = round((current / total) * 100) if total > 0 and is_training else (100 if not is_training and losses else 0)
+    return {
+        "is_training": is_training,
+        "current_epoch": current,
+        "total_epochs": total,
+        "epoch_losses": losses,
+        "current_loss": losses[-1] if losses else None,
+        "percent": percent,
+        "total_images": total_images,
+        "images_processed": images_done,
+        "images_per_epoch": images_per_epoch,
+    }
 
 
 @router.get("/status", response_model=TrainingStatus)

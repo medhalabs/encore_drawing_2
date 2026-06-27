@@ -148,6 +148,24 @@ export interface RetrainResponse {
   total_training_images: number;
 }
 
+export interface TrainingProgress {
+  is_training: boolean;
+  current_epoch: number;
+  total_epochs: number;
+  epoch_losses: number[];
+  current_loss: number | null;
+  percent: number;
+  total_images: number;
+  images_processed: number;
+  images_per_epoch: number;
+}
+
+export async function getTrainingProgress(): Promise<TrainingProgress> {
+  const res = await fetch(apiUrl("/api/v1/training/progress"));
+  if (!res.ok) throw new Error("Failed to load progress");
+  return res.json();
+}
+
 export async function getTrainingStatus(): Promise<TrainingStatus> {
   const res = await fetch(apiUrl("/api/v1/training/status"));
   if (!res.ok) throw new Error("Failed to load training status");
@@ -168,6 +186,40 @@ export async function uploadTrainingImages(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Upload failed" }));
     throw new Error(err.detail || "Upload failed");
+  }
+  return res.json();
+}
+
+export interface TrainingImage {
+  feedback_id: string;
+  master_key: string;
+  filename: string;
+  created_at: string;
+  image_url: string;
+}
+
+export async function listTrainingImages(masterKey: string): Promise<TrainingImage[]> {
+  const res = await fetch(apiUrl(`/api/v1/training/images?master_key=${encodeURIComponent(masterKey)}`));
+  if (!res.ok) throw new Error("Failed to load images");
+  return res.json();
+}
+
+export async function deleteTrainingImage(feedbackId: string): Promise<void> {
+  const res = await fetch(apiUrl(`/api/v1/training/images/${feedbackId}`), { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete image");
+}
+
+export async function stopTraining(): Promise<{ stopped: boolean; message: string }> {
+  const res = await fetch(apiUrl("/api/v1/training/stop"), { method: "POST" });
+  if (!res.ok) throw new Error("Failed to stop training");
+  return res.json();
+}
+
+export async function restartTraining(): Promise<RetrainResponse> {
+  const res = await fetch(apiUrl("/api/v1/training/restart"), { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Restart failed" }));
+    throw new Error(err.detail || "Restart failed");
   }
   return res.json();
 }
@@ -204,10 +256,12 @@ export interface StreamEventHandlers {
 export async function matchDrawingStream(
   file: File,
   handlers: StreamEventHandlers,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  useLlm: boolean = true,
 ): Promise<MatchResult> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("use_llm", String(useLlm));
 
   const response = await fetch(apiUrl("/api/v1/match/stream"), {
     method: "POST",

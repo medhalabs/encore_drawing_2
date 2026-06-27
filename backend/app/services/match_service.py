@@ -54,6 +54,7 @@ class MatchService:
         sketch_path: Path,
         original_filename: str,
         on_step: OnStepCallback | None = None,
+        use_llm: bool = True,
     ) -> MatchResult:
         job_id = sketch_path.stem
         trace: list[AgentTraceStep] = []
@@ -67,33 +68,58 @@ class MatchService:
         )
         await self._emit(upload_step, on_step)
 
-        # ── Fast path: EfficientNet classifier ─────────────────────────
-        fast_master = None
-        fast_confidence = 0.0
-        if self.classifier is not None:
-            clf_result = self.classifier.predict(sketch_path)
-            if self.classifier.is_confident(clf_result):
-                fast_master = self.catalog.get_by_key(clf_result.master_key)
-                fast_confidence = clf_result.confidence
+        # ── OpenCV preprocessing ────────────────────────────────────────
+        from app.features.vision.sketch_preprocessor import preprocess_sketch
+        preprocessed_pil = preprocess_sketch(sketch_path)
+
+        # Save preprocessed image next to the upload so the frontend can display it
+        preprocessed_dir = self.settings.upload_path / "preprocessed"
+        preprocessed_dir.mkdir(parents=True, exist_ok=True)
+        preprocessed_path = preprocessed_dir / f"{job_id}.png"
+        preprocessed_pil.save(preprocessed_path)
+
+        preprocess_step = AgentTraceStep(
+            step="preprocess",
+            status="completed",
+            message="OpenCV: ruled lines removed, sketch isolated",
+            data={"preprocessed_image_url": f"/api/v1/match/{job_id}/preprocessed"},
+        )
+        trace.append(preprocess_step)
+        await self._emit(preprocess_step, on_step)
+
+        # ── EfficientNet classifier ─────────────────────────────────────
+        from app.core.models.schemas import ScoreBreakdown
+        clf_result = self.classifier.predict_from_pil(preprocessed_pil) if self.classifier else None
+
+        # When LLM is disabled, always trust the DL model (ignore confidence threshold)
+        dl_only_mode = not use_llm
+        use_fast_path = (
+            clf_result is not None and (
+                self.classifier.is_confident(clf_result) or dl_only_mode
+            )
+        )
+
+        fast_master = self.catalog.get_by_key(clf_result.master_key) if use_fast_path and clf_result else None
+        fast_confidence = clf_result.confidence if clf_result else 0.0
 
         if fast_master is not None:
+            mode_note = "DL-only mode" if dl_only_mode else "skipping LLM compare"
             clf_step = AgentTraceStep(
                 step="classify",
                 status="completed",
-                message=f"EfficientNet matched {fast_master.key} (confidence {fast_confidence:.0%}) — skipping LLM compare",
+                message=f"EfficientNet → {fast_master.key} ({fast_confidence:.0%}) — {mode_note}",
                 data={"master_key": fast_master.key, "confidence": fast_confidence, "source": "efficientnet"},
             )
             trace.append(clf_step)
             await self._emit(clf_step, on_step)
 
-            # Still run analyze so we get handwritten_lengths for extraction
+            # Run analyze to get handwritten_lengths for length extraction
             analysis, step = self.orchestrator.analyze_sketch(sketch_path)
             trace.append(step)
             await self._emit(step, on_step)
 
             master = fast_master
             confidence = fast_confidence
-            from app.core.models.schemas import ScoreBreakdown
             breakdown = ScoreBreakdown(
                 retrieval_score=0.0,
                 vector_score=0.0,
@@ -103,6 +129,25 @@ class MatchService:
             )
             top_candidates = []
             warnings = []
+        elif dl_only_mode:
+            # LLM off but classifier returned nothing (model not loaded yet)
+            warnings = ["Classifier not ready — no model loaded. Please retrain."]
+            result = MatchResult(
+                job_id=job_id,
+                matched_master=None,
+                no_match=True,
+                confidence=0.0,
+                extracted_lengths=[],
+                filled_json={},
+                agent_trace=trace,
+                upload_image_url=f"/api/v1/match/{job_id}/upload",
+                warnings=warnings,
+                score_breakdown=ScoreBreakdown(0, 0, 0, 0, 0),
+                top_candidates=[],
+            )
+            self._results[job_id] = result
+            await db_service.save_match(result, str(sketch_path))
+            return result
         else:
             # ── Full LLM path ───────────────────────────────────────────
             analysis, step = self.orchestrator.analyze_sketch(sketch_path)
@@ -198,6 +243,7 @@ class MatchService:
         self,
         sketch_path: Path,
         original_filename: str,
+        use_llm: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -206,7 +252,7 @@ class MatchService:
 
         async def run() -> None:
             try:
-                result = await self.process_match(sketch_path, original_filename, on_step=on_step)
+                result = await self.process_match(sketch_path, original_filename, on_step=on_step, use_llm=use_llm)
                 await queue.put({"type": "result", "payload": result.model_dump()})
             except Exception as e:
                 logger.exception("Match pipeline failed for %s", original_filename)

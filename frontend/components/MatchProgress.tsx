@@ -1,10 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { apiUrl } from "@/lib/api";
 import type { AgentTraceStep } from "@/lib/api";
 
 const PIPELINE_STEPS = [
   "upload",
+  "preprocess",
+  "classify",
   "analyze",
   "retrieve",
   "compare",
@@ -48,6 +51,25 @@ function RetrieveStepSummary({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+function PreprocessStepDetails({ data }: { data: Record<string, unknown> }) {
+  const imgUrl = data.preprocessed_image_url as string | undefined;
+  if (!imgUrl) return null;
+
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-xs text-slate-400">Preprocessed image sent to classifier:</p>
+      <div className="rounded-lg border border-slate-700 p-2 inline-block" style={{ background: "#fff" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={apiUrl(imgUrl)}
+          alt="Preprocessed sketch"
+          className="max-h-64 max-w-full rounded object-contain"
+        />
+      </div>
+    </div>
+  );
+}
+
 function StepDetails({ step, data }: { step: string; data: Record<string, unknown> }) {
   if (!data || Object.keys(data).length === 0) {
     return <p className="text-xs text-slate-500 mt-2">No debug data</p>;
@@ -55,10 +77,13 @@ function StepDetails({ step, data }: { step: string; data: Record<string, unknow
 
   return (
     <>
+      {step === "preprocess" && <PreprocessStepDetails data={data} />}
       {step === "retrieve" && <RetrieveStepSummary data={data} />}
-      <pre className="mt-2 rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs overflow-auto max-h-64 text-slate-300">
-        {JSON.stringify(data, null, 2)}
-      </pre>
+      {step !== "preprocess" && (
+        <pre className="mt-2 rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs overflow-auto max-h-64 text-slate-300">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      )}
     </>
   );
 }
@@ -100,7 +125,7 @@ export default function MatchProgress({ trace, loading, currentStep }: Props) {
           const entry = traceByStep.get(step);
           const isActive = activeStep === step && loading;
           const isDone = !!entry;
-          const isOpen = expanded[step] ?? isActive ?? false;
+          const isOpen = expanded[step] ?? (step === "preprocess" && isDone) ?? isActive ?? false;
 
           return (
             <div

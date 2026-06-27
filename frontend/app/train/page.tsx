@@ -3,13 +3,197 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type ClassStat,
+  type TrainingImage,
+  type TrainingProgress,
   type TrainingStatus,
+  apiUrl,
+  deleteTrainingImage,
+  getTrainingProgress,
   getTrainingStatus,
+  listTrainingImages,
+  restartTraining,
+  stopTraining,
   triggerRetrain,
   uploadTrainingImages,
 } from "@/lib/api";
 
 const CATEGORIES = ["Aprons", "Capping", "FootMoulds", "Gutters", "Misc", "RidgeValley", "Soakers"];
+
+// ── Loss curve SVG chart ──────────────────────────────────────────────────────
+function LossCurve({ losses, totalEpochs, currentEpoch, imagesProcessed, imagesPerEpoch }: {
+  losses: number[];
+  totalEpochs: number;
+  currentEpoch: number;
+  imagesProcessed: number;
+  imagesPerEpoch: number;
+}) {
+  const W = 540, H = 180, PAD = { top: 16, right: 16, bottom: 36, left: 52 };
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+
+  const allLosses = losses.length > 0 ? losses : [];
+  const maxL = allLosses.length > 0 ? Math.max(...allLosses) * 1.1 : 2;
+  const minL = allLosses.length > 0 ? Math.max(0, Math.min(...allLosses) * 0.9) : 0;
+  const range = maxL - minL || 1;
+
+  const toX = (epoch: number) => PAD.left + (epoch / (totalEpochs - 1 || 1)) * innerW;
+  const toY = (loss: number) => PAD.top + ((maxL - loss) / range) * innerH;
+
+  // Build SVG path for completed epochs
+  const points = allLosses.map((l, i) => `${toX(i).toFixed(1)},${toY(l).toFixed(1)}`);
+  const linePath = points.length > 1 ? `M ${points.join(" L ")}` : "";
+
+  // Partial line for the current in-progress epoch (straight line extending to current batch)
+  const inProgressX = imagesPerEpoch > 0
+    ? PAD.left + ((currentEpoch - 1 + imagesProcessed / imagesPerEpoch) / (totalEpochs - 1 || 1)) * innerW
+    : null;
+  const lastY = allLosses.length > 0 ? toY(allLosses[allLosses.length - 1]) : null;
+
+  // Gradient fill under curve
+  const areaPath = points.length > 1
+    ? `M ${points[0]} L ${points.join(" L ")} L ${toX(allLosses.length - 1).toFixed(1)},${(PAD.top + innerH).toFixed(1)} L ${toX(0).toFixed(1)},${(PAD.top + innerH).toFixed(1)} Z`
+    : "";
+
+  // Y-axis labels
+  const yTicks = 4;
+  const yLabels = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const val = minL + (range * i) / yTicks;
+    const y = toY(val);
+    return { val, y };
+  });
+
+  // X-axis labels (epoch numbers)
+  const xLabels = Array.from({ length: totalEpochs }, (_, i) => ({
+    epoch: i + 1,
+    x: toX(i),
+  }));
+
+  return (
+    <div className="rounded-xl bg-slate-900/80 border border-slate-700 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-slate-300 tracking-wide uppercase">Loss Curve</span>
+        {allLosses.length > 0 && (
+          <span className="text-xs text-slate-400 font-mono">
+            latest: <span className="text-amber-300">{allLosses[allLosses.length - 1].toFixed(4)}</span>
+            {allLosses.length > 1 && (
+              <span className={`ml-2 ${allLosses[allLosses.length - 1] < allLosses[allLosses.length - 2] ? "text-emerald-400" : "text-red-400"}`}>
+                {allLosses[allLosses.length - 1] < allLosses[allLosses.length - 2] ? "▼" : "▲"}
+                {Math.abs(allLosses[allLosses.length - 1] - allLosses[allLosses.length - 2]).toFixed(4)}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
+        <defs>
+          <linearGradient id="lossGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.02" />
+          </linearGradient>
+          <linearGradient id="inProgressGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.6" />
+            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.1" />
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines */}
+        {yLabels.map(({ y }, i) => (
+          <line key={i} x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
+            stroke="#334155" strokeWidth="1" strokeDasharray={i === 0 ? "0" : "3,3"} />
+        ))}
+        {xLabels.map(({ x }, i) => (
+          <line key={i} x1={x} y1={PAD.top} x2={x} y2={PAD.top + innerH}
+            stroke="#1e293b" strokeWidth="1" />
+        ))}
+
+        {/* Area fill */}
+        {areaPath && <path d={areaPath} fill="url(#lossGrad)" />}
+
+        {/* Loss line */}
+        {linePath && (
+          <path d={linePath} fill="none" stroke="#f59e0b" strokeWidth="2.5"
+            strokeLinecap="round" strokeLinejoin="round" />
+        )}
+
+        {/* In-progress epoch dotted extension */}
+        {inProgressX !== null && lastY !== null && allLosses.length > 0 && (
+          <line
+            x1={toX(allLosses.length - 1)} y1={lastY}
+            x2={inProgressX} y2={lastY}
+            stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.5"
+          />
+        )}
+
+        {/* Epoch dots */}
+        {allLosses.map((l, i) => (
+          <circle key={i} cx={toX(i)} cy={toY(l)} r="4"
+            fill="#f59e0b" stroke="#1e293b" strokeWidth="2">
+            <title>Epoch {i + 1}: {l.toFixed(4)}</title>
+          </circle>
+        ))}
+
+        {/* Current epoch pulse dot */}
+        {inProgressX !== null && lastY !== null && allLosses.length > 0 && (
+          <circle cx={inProgressX} cy={lastY} r="4" fill="#f59e0b" opacity="0.7">
+            <animate attributeName="r" values="3;6;3" dur="1.5s" repeatCount="indefinite" />
+            <animate attributeName="opacity" values="0.7;0.2;0.7" dur="1.5s" repeatCount="indefinite" />
+          </circle>
+        )}
+
+        {/* Y-axis labels */}
+        {yLabels.map(({ val, y }, i) => (
+          <text key={i} x={PAD.left - 6} y={y + 4} textAnchor="end"
+            fontSize="9" fill="#64748b" fontFamily="monospace">
+            {val.toFixed(2)}
+          </text>
+        ))}
+
+        {/* X-axis labels */}
+        {xLabels.map(({ epoch, x }) => (
+          <text key={epoch} x={x} y={PAD.top + innerH + 16} textAnchor="middle"
+            fontSize="9" fill={epoch <= currentEpoch ? "#94a3b8" : "#334155"}
+            fontFamily="monospace">
+            {epoch}
+          </text>
+        ))}
+
+        {/* Axes */}
+        <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + innerH}
+          stroke="#475569" strokeWidth="1.5" />
+        <line x1={PAD.left} y1={PAD.top + innerH} x2={W - PAD.right} y2={PAD.top + innerH}
+          stroke="#475569" strokeWidth="1.5" />
+
+        {/* Axis labels */}
+        <text x={PAD.left - 38} y={PAD.top + innerH / 2} textAnchor="middle"
+          fontSize="9" fill="#64748b" transform={`rotate(-90, ${PAD.left - 38}, ${PAD.top + innerH / 2})`}>
+          Loss
+        </text>
+        <text x={PAD.left + innerW / 2} y={H - 2} textAnchor="middle"
+          fontSize="9" fill="#64748b">
+          Epoch
+        </text>
+      </svg>
+
+      {/* Image throughput mini-stat */}
+      {imagesPerEpoch > 0 && (
+        <div className="mt-2 flex items-center gap-3 text-xs text-slate-500">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+            <span>
+              <span className="text-slate-300 font-mono">{imagesProcessed.toLocaleString()}</span>
+              {" / "}
+              <span className="font-mono">{imagesPerEpoch.toLocaleString()}</span>
+              {" images this epoch"}
+            </span>
+          </div>
+          <div className="ml-auto font-mono">
+            {Math.round((imagesProcessed / imagesPerEpoch) * 100)}%
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ProgressBar({ value, max }: { value: number; max: number }) {
   const pct = max === 0 ? 0 : Math.min((value / max) * 100, 100);
@@ -42,9 +226,15 @@ export default function TrainPage() {
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [retraining, setRetraining] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [retrainMsg, setRetrainMsg] = useState<string | null>(null);
+  const [progress, setProgress] = useState<TrainingProgress | null>(null);
+  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>("All");
   const [search, setSearch] = useState("");
+  const [classImages, setClassImages] = useState<TrainingImage[]>([]);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -59,11 +249,40 @@ export default function TrainPage() {
     }
   }, []);
 
+  const loadClassImages = useCallback(async (key: string) => {
+    if (!key) { setClassImages([]); return; }
+    setLoadingImages(true);
+    try {
+      setClassImages(await listTrainingImages(key));
+    } catch {
+      setClassImages([]);
+    } finally {
+      setLoadingImages(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadStatus();
   }, [loadStatus]);
 
-  // Poll while training is active
+  useEffect(() => {
+    loadClassImages(selectedKey);
+  }, [selectedKey, loadClassImages]);
+
+  const handleDeleteImage = async (feedbackId: string) => {
+    setDeletingId(feedbackId);
+    try {
+      await deleteTrainingImage(feedbackId);
+      setClassImages((prev) => prev.filter((img) => img.feedback_id !== feedbackId));
+      await loadStatus();
+    } catch {
+      // ignore
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Poll status while training is active
   useEffect(() => {
     if (status?.is_training) {
       pollRef.current = setInterval(loadStatus, 3000);
@@ -72,6 +291,20 @@ export default function TrainPage() {
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [status?.is_training, loadStatus]);
+
+  // Poll fine-grained progress every 1.5 s while training
+  useEffect(() => {
+    if (!status?.is_training) {
+      if (progressPollRef.current) clearInterval(progressPollRef.current);
+      return;
+    }
+    const tick = async () => {
+      try { setProgress(await getTrainingProgress()); } catch { /* ignore */ }
+    };
+    tick();
+    progressPollRef.current = setInterval(tick, 1500);
+    return () => { if (progressPollRef.current) clearInterval(progressPollRef.current); };
+  }, [status?.is_training]);
 
   const handleFiles = (incoming: FileList | null) => {
     if (!incoming) return;
@@ -99,7 +332,7 @@ export default function TrainPage() {
       const res = await uploadTrainingImages(selectedKey, files);
       setUploadMsg(`Saved ${res.saved} image${res.saved !== 1 ? "s" : ""} for ${selectedKey}${res.skipped ? ` (${res.skipped} skipped)` : ""}`);
       setFiles([]);
-      await loadStatus();
+      await Promise.all([loadStatus(), loadClassImages(selectedKey)]);
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -116,6 +349,34 @@ export default function TrainPage() {
       await loadStatus();
     } catch (e) {
       setRetrainMsg(e instanceof Error ? e.message : "Retrain failed");
+    } finally {
+      setRetraining(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setStopping(true);
+    setRetrainMsg(null);
+    try {
+      const res = await stopTraining();
+      setRetrainMsg(res.message);
+      await loadStatus();
+    } catch (e) {
+      setRetrainMsg(e instanceof Error ? e.message : "Stop failed");
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  const handleRestart = async () => {
+    setRetraining(true);
+    setRetrainMsg(null);
+    try {
+      const res = await restartTraining();
+      setRetrainMsg(res.message);
+      await loadStatus();
+    } catch (e) {
+      setRetrainMsg(e instanceof Error ? e.message : "Restart failed");
     } finally {
       setRetraining(false);
     }
@@ -257,19 +518,133 @@ export default function TrainPage() {
             </div>
           )}
 
-          {/* Retrain */}
+          {/* Uploaded images for selected class */}
+          {selectedKey && (
+            <div className="border-t border-slate-800 pt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-300">
+                  Uploaded sketches for <span className="text-blue-400">{selectedKey.split("/")[1]}</span>
+                </h3>
+                <span className="text-xs text-slate-500">{classImages.length} image{classImages.length !== 1 ? "s" : ""}</span>
+              </div>
+              {loadingImages ? (
+                <p className="text-xs text-slate-500">Loading…</p>
+              ) : classImages.length === 0 ? (
+                <p className="text-xs text-slate-600 italic">No uploaded sketches yet for this class.</p>
+              ) : (
+                <div className="grid grid-cols-4 gap-2 max-h-52 overflow-y-auto pr-1">
+                  {classImages.map((img) => (
+                    <div key={img.feedback_id} className="relative group rounded-lg overflow-hidden border border-slate-700 bg-slate-900">
+                      <img
+                        src={apiUrl(img.image_url)}
+                        alt={img.filename}
+                        className="w-full aspect-square object-cover"
+                      />
+                      <button
+                        onClick={() => handleDeleteImage(img.feedback_id)}
+                        disabled={deletingId === img.feedback_id}
+                        title="Remove this training image"
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                      >
+                        {deletingId === img.feedback_id ? "…" : "×"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Retrain / Stop / Restart */}
           <div className="border-t border-slate-800 pt-4 space-y-3">
             <h3 className="text-lg font-semibold text-slate-200">Retrain classifier</h3>
             <p className="text-xs text-slate-500">
-              Runs 10 epochs in a background thread. The server stays live and hot-swaps the new weights when done. Auto-triggers every 10 corrections from the Match page.
+              Runs 10 epochs in a background thread. Hot-swaps weights when done. Auto-triggers every 10 corrections from the Match page.
             </p>
-            <button
-              onClick={handleRetrain}
-              disabled={retraining || status?.is_training}
-              className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm transition-colors"
-            >
-              {status?.is_training ? "Training in progress…" : retraining ? "Starting…" : "Retrain now"}
-            </button>
+
+            {/* Primary action row */}
+            {!status?.is_training ? (
+              <button
+                onClick={handleRetrain}
+                disabled={retraining}
+                className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm transition-colors"
+              >
+                {retraining ? "Starting…" : "Retrain now"}
+              </button>
+            ) : (
+              /* Training is running */
+              <div className="space-y-3">
+                {/* Status header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs text-amber-400 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse inline-block" />
+                    Training in progress
+                  </div>
+                  {progress && (
+                    <span className="text-xs text-slate-400 font-mono">
+                      {progress.total_images.toLocaleString()} total images
+                    </span>
+                  )}
+                </div>
+
+                {/* Epoch progress bar */}
+                {progress && (
+                  <div>
+                    <div className="flex justify-between text-xs text-slate-400 mb-1">
+                      <span>
+                        Epoch{" "}
+                        <span className="text-slate-200 font-semibold">{progress.current_epoch}</span>
+                        {" / "}{progress.total_epochs}
+                      </span>
+                      {progress.current_loss !== null && (
+                        <span>Loss: <span className="text-slate-200 font-mono">{progress.current_loss.toFixed(4)}</span></span>
+                      )}
+                    </div>
+                    <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-amber-500 transition-all duration-500"
+                        style={{ width: `${(progress.current_epoch / progress.total_epochs) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Live loss chart */}
+                {progress ? (
+                  <LossCurve
+                    losses={progress.epoch_losses}
+                    totalEpochs={progress.total_epochs}
+                    currentEpoch={progress.current_epoch}
+                    imagesProcessed={progress.images_processed}
+                    imagesPerEpoch={progress.images_per_epoch}
+                  />
+                ) : (
+                  <div className="rounded-xl bg-slate-900/80 border border-slate-700 p-4 animate-pulse">
+                    <div className="h-4 w-24 bg-slate-700 rounded mb-3" />
+                    <div className="h-32 bg-slate-800 rounded" />
+                  </div>
+                )}
+
+                {/* Stop / Restart */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleStop}
+                    disabled={stopping}
+                    className="py-2.5 rounded-xl bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm transition-colors"
+                  >
+                    {stopping ? "Stopping…" : "⏹ Stop"}
+                  </button>
+                  <button
+                    onClick={handleRestart}
+                    disabled={retraining}
+                    className="py-2.5 rounded-xl bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm transition-colors"
+                  >
+                    {retraining ? "Restarting…" : "↺ Restart"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {retrainMsg && (
               <div className="rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-2 text-sm text-slate-300">
                 {retrainMsg}

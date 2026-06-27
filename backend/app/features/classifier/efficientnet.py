@@ -68,6 +68,15 @@ class EfficientNetClassifier:
 
         # Track how many images each class has — only trust classifier when enough data
         self._class_counts: dict[str, int] = {}
+        self._stop_event = threading.Event()
+
+        # Live training progress (reset at start of each retrain)
+        self._epoch_current: int = 0
+        self._epoch_total: int = 10
+        self._epoch_losses: list[float] = []
+        self._training_images_count: int = 0
+        self._images_processed: int = 0   # images seen so far this epoch
+        self._images_per_epoch: int = 0   # total images in one epoch
 
         # Weights are loaded lazily via load_if_ready() after the label index is populated
         logger.info("EfficientNet classifier initialised — call load_if_ready() after setting label_index")
@@ -75,15 +84,26 @@ class EfficientNetClassifier:
     # ── Public API ────────────────────────────────────────────────────
 
     def predict(self, image_path: Path) -> ClassifierResult | None:
-        """
-        Returns a ClassifierResult if the model is loaded and confident.
-        Returns None if not enough data or model not loaded — caller falls back to LLM.
-        """
+        """Classify from a file path. Returns None if model not loaded."""
+        with self._lock:
+            if self._model is None:
+                return None
+        from app.features.vision.sketch_preprocessor import preprocess_sketch
+        img = preprocess_sketch(image_path)
+        return self._infer(img.convert("RGB"))
+
+    def predict_from_pil(self, img: "Image.Image") -> ClassifierResult | None:
+        """Classify from an already-preprocessed PIL image."""
+        with self._lock:
+            if self._model is None:
+                return None
+        return self._infer(img.convert("RGB"))
+
+    def _infer(self, img: "Image.Image") -> ClassifierResult | None:
         with self._lock:
             if self._model is None:
                 return None
 
-        img = Image.open(image_path).convert("RGB")
         tensor = _TRANSFORM(img).unsqueeze(0)
 
         with self._lock:
@@ -139,8 +159,17 @@ class EfficientNetClassifier:
         if self._training:
             logger.info("Retrain already in progress, skipping")
             return
+        self._stop_event.clear()
         t = threading.Thread(target=self._retrain, args=(training_images, on_complete), daemon=True)
         t.start()
+
+    def stop_training(self) -> bool:
+        """Signal the running retrain to stop after the current epoch. Returns True if was training."""
+        if not self._training:
+            return False
+        self._stop_event.set()
+        logger.info("Stop signal sent to retrain thread")
+        return True
 
     # ── Internal ──────────────────────────────────────────────────────
 
@@ -163,6 +192,13 @@ class EfficientNetClassifier:
         on_complete: callable | None,
     ) -> None:
         self._training = True
+        self._stop_event.clear()
+        self._epoch_current = 0
+        self._epoch_total = 10
+        self._epoch_losses = []
+        self._training_images_count = len(training_images)
+        self._images_processed = 0
+        self._images_per_epoch = len(training_images)
         try:
             logger.info("Retraining EfficientNet on %d images …", len(training_images))
 
@@ -195,7 +231,14 @@ class EfficientNetClassifier:
             criterion = nn.CrossEntropyLoss()
 
             model.train()
+            stopped_early = False
             for epoch in range(10):
+                if self._stop_event.is_set():
+                    logger.info("Retrain stopped at epoch %d by stop signal", epoch + 1)
+                    stopped_early = True
+                    break
+                self._epoch_current = epoch + 1
+                self._images_processed = 0
                 total_loss = 0.0
                 for images, labels in loader:
                     optimizer.zero_grad()
@@ -204,7 +247,14 @@ class EfficientNetClassifier:
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
-                logger.info("Epoch %d/%d  loss=%.4f", epoch + 1, 10, total_loss / max(len(loader), 1))
+                    self._images_processed += len(images)
+                avg_loss = total_loss / max(len(loader), 1)
+                self._epoch_losses.append(round(avg_loss, 4))
+                logger.info("Epoch %d/%d  loss=%.4f", epoch + 1, 10, avg_loss)
+
+            if stopped_early:
+                logger.info("Retrain cancelled — weights NOT saved")
+                return
 
             # Save versioned weights
             existing_pts = sorted(self.model_dir.glob("efficientnet_v*.pt"))
@@ -264,6 +314,7 @@ class _SketchDataset(torch.utils.data.Dataset):
         return len(self.items)
 
     def __getitem__(self, idx: int):
+        from app.features.vision.sketch_preprocessor import preprocess_sketch
         path, label = self.items[idx]
-        img = Image.open(path).convert("RGB")
-        return self.transform(img), label
+        img = preprocess_sketch(path)  # same pipeline as inference
+        return self.transform(img.convert("RGB")), label

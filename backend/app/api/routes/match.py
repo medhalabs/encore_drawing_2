@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.config.settings import get_settings
@@ -15,7 +15,10 @@ def get_match_service() -> MatchService:
 
 
 @router.post("/stream")
-async def match_drawing_stream(file: UploadFile = File(...)):
+async def match_drawing_stream(
+    file: UploadFile = File(...),
+    use_llm: bool = Form(True),
+):
     settings = get_settings()
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -28,7 +31,7 @@ async def match_drawing_stream(file: UploadFile = File(...)):
     sketch_path = service.save_upload(file.filename, content)
 
     async def event_generator():
-        async for event in service.process_match_stream(sketch_path, file.filename):
+        async for event in service.process_match_stream(sketch_path, file.filename, use_llm=use_llm):
             event_type = event["type"]
             payload = event["payload"]
             data = json.dumps(payload, default=str)
@@ -46,7 +49,10 @@ async def match_drawing_stream(file: UploadFile = File(...)):
 
 
 @router.post("")
-async def match_drawing(file: UploadFile = File(...)):
+async def match_drawing(
+    file: UploadFile = File(...),
+    use_llm: bool = Form(True),
+):
     settings = get_settings()
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -59,7 +65,7 @@ async def match_drawing(file: UploadFile = File(...)):
     sketch_path = service.save_upload(file.filename, content)
 
     try:
-        result = await service.process_match(sketch_path, file.filename)
+        result = await service.process_match(sketch_path, file.filename, use_llm=use_llm)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -75,6 +81,15 @@ def get_upload_image(job_id: str):
             media = "image/png" if ext == ".png" else "image/jpeg"
             return FileResponse(path, media_type=media)
     raise HTTPException(status_code=404, detail="Upload not found")
+
+
+@router.get("/{job_id}/preprocessed")
+def get_preprocessed_image(job_id: str):
+    settings = get_settings()
+    path = settings.upload_path / "preprocessed" / f"{job_id}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Preprocessed image not found")
+    return FileResponse(path, media_type="image/png")
 
 
 @router.get("/{job_id}/export")
