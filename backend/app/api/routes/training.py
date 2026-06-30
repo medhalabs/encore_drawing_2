@@ -73,7 +73,8 @@ def _feedback_counts(feedback_dir: Path) -> dict[str, int]:
         try:
             entry = json.loads(line)
             key = entry.get("master_key", "")
-            if key:
+            img_path = entry.get("image_path", "")
+            if key and img_path and (feedback_dir / img_path).exists():
                 counts[key] = counts.get(key, 0) + 1
         except Exception:
             continue

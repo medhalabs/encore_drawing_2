@@ -33,6 +33,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 >
                   Train
                 </Link>
+                <Link
+                  href="/batch"
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-slate-100 transition-colors"
+                >
+                  Batch
+                </Link>
               </nav>
             </div>
           </header>

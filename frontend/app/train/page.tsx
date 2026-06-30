@@ -532,7 +532,7 @@ export default function TrainPage() {
               ) : classImages.length === 0 ? (
                 <p className="text-xs text-slate-600 italic">No uploaded sketches yet for this class.</p>
               ) : (
-                <div className="grid grid-cols-4 gap-2 max-h-52 overflow-y-auto pr-1">
+                <div className="grid grid-cols-4 gap-2">
                   {classImages.map((img) => (
                     <div key={img.feedback_id} className="relative group rounded-lg overflow-hidden border border-slate-700 bg-slate-900">
                       <img

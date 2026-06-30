@@ -52,19 +52,37 @@ function RetrieveStepSummary({ data }: { data: Record<string, unknown> }) {
 }
 
 function PreprocessStepDetails({ data }: { data: Record<string, unknown> }) {
-  const imgUrl = data.preprocessed_image_url as string | undefined;
-  if (!imgUrl) return null;
+  const originalUrl = data.original_image_url as string | undefined;
+  const preprocessedUrl = data.preprocessed_image_url as string | undefined;
+  if (!preprocessedUrl) return null;
 
   return (
     <div className="mt-2 space-y-2">
-      <p className="text-xs text-slate-400">Preprocessed image sent to classifier:</p>
-      <div className="rounded-lg border border-slate-700 p-2 inline-block" style={{ background: "#fff" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={apiUrl(imgUrl)}
-          alt="Preprocessed sketch"
-          className="max-h-64 max-w-full rounded object-contain"
-        />
+      <div className="flex gap-4 flex-wrap">
+        {originalUrl && (
+          <div className="space-y-1">
+            <p className="text-xs text-slate-400">Original upload:</p>
+            <div className="rounded-lg border border-slate-700 p-2 inline-block" style={{ background: "#fff" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={apiUrl(originalUrl)}
+                alt="Original sketch"
+                className="max-h-52 max-w-xs rounded object-contain"
+              />
+            </div>
+          </div>
+        )}
+        <div className="space-y-1">
+          <p className="text-xs text-slate-400">Preprocessed (sent to classifier):</p>
+          <div className="rounded-lg border border-slate-700 p-2 inline-block" style={{ background: "#fff" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={apiUrl(preprocessedUrl)}
+              alt="Preprocessed sketch"
+              className="max-h-52 max-w-xs rounded object-contain"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

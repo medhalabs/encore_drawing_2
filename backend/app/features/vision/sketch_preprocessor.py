@@ -117,16 +117,26 @@ def _pipeline(bgr: np.ndarray) -> np.ndarray:
     # ── 5. Remove noise specks ────────────────────────────────────────────────
     binary = _remove_small_blobs(binary, _MIN_BLOB_PX)
 
-    # ── 6. Strip dimension numbers (compact blobs = text, elongated = lines) ──
-    binary = _strip_text_blobs(binary)
+    # ── 6. Measure stroke thickness to decide post-processing strategy ────────
+    ink = cv2.bitwise_not(binary)
+    dist = cv2.distanceTransform(ink, cv2.DIST_L2, 5)
+    max_stroke_radius = float(dist.max())
+    thick_marker = max_stroke_radius > 4  # thick marker vs pencil/thin pen
 
-    # ── 7. Thin strokes to ~1-2px (matches training image style) ─────────────
-    binary = _thin_strokes(binary)
+    # ── 7. Strip dimension numbers — only safe for thin strokes ──────────────
+    # For thick markers, corner junctions look identical to text blobs (compact
+    # bounding box, smallish area) and get incorrectly deleted, destroying the
+    # profile shape. Skip this step for thick-stroke images.
+    if not thick_marker:
+        binary = _strip_text_blobs(binary)
 
-    # ── 8. Invert to white background / dark strokes (matches training images) ─
+    # ── 8. Thin strokes to ~2-3px ────────────────────────────────────────────
+    binary = _thin_strokes(binary, max_stroke_radius)
+
+    # ── 9. Invert to white background / dark strokes (matches training images) ─
     binary = cv2.bitwise_not(binary)
 
-    # ── 9. Crop to content ────────────────────────────────────────────────────
+    # ── 10. Crop to content ───────────────────────────────────────────────────
     binary = _crop_to_content(binary)
 
     return binary
@@ -154,28 +164,40 @@ def _remove_small_blobs(binary: np.ndarray, min_px: int) -> np.ndarray:
     return cv2.bitwise_not(keep)
 
 
-def _thin_strokes(binary: np.ndarray) -> np.ndarray:
+def _thin_strokes(binary: np.ndarray, max_stroke_radius: float = 0.0) -> np.ndarray:
     """
-    Reduce thick pen strokes to ~2px using iterative erosion.
-    Training images used thin lines (1.5-2.5px); real client sketches use
-    thick markers. Thinning bridges that gap so the model sees familiar stroke widths.
-    Stops eroding when ink pixels drop below 0.5% of image (avoids over-thinning).
+    Reduce thick strokes toward ~2-3px using controlled erosion.
+
+    Uses the pre-measured stroke radius so we erode only as much as needed —
+    thin pencil strokes get light thinning, thick marker strokes get enough
+    erosion to reach ~3px without fragmenting corners and junctions.
     """
     ink = cv2.bitwise_not(binary)
-    total = ink.size
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    prev = ink.copy()
-    for _ in range(8):
-        eroded = cv2.erode(prev, k, iterations=1)
-        if eroded.sum() / 255 < total * 0.003:
-            break
-        prev = eroded
-    if prev.sum() == 0:
+    if ink.sum() == 0:
         return binary
-    # Dilate back by 1px so strokes are ~2px wide
+
+    target_radius = 2.0
+    # How many erosion steps to go from current radius to target
+    steps = max(0, int(round(max_stroke_radius - target_radius)))
+    # Cap at 6 to avoid destroying short segments; min 1 for any real photo
+    steps = min(steps, 6)
+    if steps == 0:
+        return binary
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    eroded = cv2.erode(ink, k, iterations=steps)
+
+    # If erosion wiped out too much ink, dial back by 1 step
+    if eroded.sum() / 255 < ink.sum() / 255 * 0.15:
+        eroded = cv2.erode(ink, k, iterations=max(steps - 1, 1))
+
+    if eroded.sum() == 0:
+        return binary
+
+    # Dilate back 1px to reconnect any broken stroke tips
     k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    prev = cv2.dilate(prev, k2, iterations=1)
-    return cv2.bitwise_not(prev)
+    eroded = cv2.dilate(eroded, k2, iterations=1)
+    return cv2.bitwise_not(eroded)
 
 
 def _strip_text_blobs(binary: np.ndarray,

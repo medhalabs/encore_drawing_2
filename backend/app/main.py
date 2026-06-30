@@ -1,10 +1,12 @@
+import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import feedback, health, masters, match, training
+from app.api.routes import batch, feedback, health, masters, match, training
 from app.config.settings import get_settings
 from app.features.agent.orchestrator import MatchOrchestrator
 from app.features.cache import redis_cache
@@ -22,6 +24,15 @@ from app.services.feedback_service import FeedbackService
 from app.services.match_service import MatchService
 
 settings = get_settings()
+
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 catalog = MasterCatalog(settings)
 feedback_store = FeedbackStore(settings, catalog)
 ollama = OllamaService(settings)
@@ -104,3 +115,4 @@ app.include_router(masters.router, prefix="/api/v1")
 app.include_router(match.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(training.router, prefix="/api/v1")
+app.include_router(batch.router, prefix="/api/v1")

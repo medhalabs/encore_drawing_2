@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +13,9 @@ from app.features.masters.loader import MasterRecord
 from app.features.ollama.client import OllamaService
 from app.features.rag.retriever import MasterRetriever, RetrievalCandidate
 from app.features.vision.profile_comparator import ProfileComparator
-from app.features.vision.sketch_analyzer import SketchAnalyzer
+from app.features.vision.sketch_analyzer import SketchAnalyzer, _filter_angle_lengths
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -67,6 +70,7 @@ class MatchOrchestrator:
         return boosts
 
     def analyze_sketch(self, sketch_path: Path) -> tuple[SketchAnalysis, AgentTraceStep]:
+        logger.info("orchestrator analyze_sketch %s", sketch_path.name)
         analysis = self.analyzer.analyze(sketch_path)
         return analysis, AgentTraceStep(
             step="analyze",
@@ -106,6 +110,12 @@ class MatchOrchestrator:
         self.retriever.set_vector_scores(vector_scores)
 
         candidates = self.retriever.retrieve(analysis, top_k=3)
+        logger.info(
+            "orchestrator retrieve %s → %d candidates: %s",
+            sketch_path.name,
+            len(candidates),
+            [c.master.key for c in candidates],
+        )
         return candidates, AgentTraceStep(
             step="retrieve",
             status="completed",
@@ -159,6 +169,11 @@ class MatchOrchestrator:
 
         details.sort(key=lambda d: d.combined_score, reverse=True)
         self._last_compare_details = details
+        logger.info(
+            "orchestrator compare %s → %s",
+            sketch_path.name,
+            [(d.master.key, round(d.combined_score, 3), round(d.vision_score, 3)) for d in details],
+        )
 
         return details, AgentTraceStep(
             step="compare",
@@ -194,6 +209,13 @@ class MatchOrchestrator:
         # Reject match entirely when no candidate scores high enough
         no_match_threshold = getattr(self.settings, "no_match_vision_threshold", 0.55)
         if vision_score < no_match_threshold:
+            logger.info(
+                "orchestrator select %s → no_match best=%s vision=%.2f threshold=%.2f",
+                analysis.part_class_hint or "unknown",
+                best.master.key,
+                vision_score,
+                no_match_threshold,
+            )
             top_candidates = [
                 TopCandidate(
                     key=d.master.key,
@@ -257,6 +279,12 @@ class MatchOrchestrator:
             for d in details[:3]
         ]
 
+        logger.info(
+            "orchestrator select → master=%s vision=%.2f combined=%.2f",
+            best.master.key,
+            vision_score,
+            best.combined_score,
+        )
         return best.master, confidence, breakdown, warnings, top_candidates, AgentTraceStep(
             step="match",
             status="warning" if warnings else "completed",
@@ -273,20 +301,52 @@ class MatchOrchestrator:
         self, sketch_path: Path, master: MasterRecord, analysis: SketchAnalysis
     ) -> tuple[list[float], float, AgentTraceStep]:
         segment_count = master.segment_count
+        filtered_lengths = _filter_angle_lengths(
+            analysis.handwritten_lengths,
+            analysis.angles_estimate,
+        )
+        angles_leaked = (
+            analysis.handwritten_lengths
+            and filtered_lengths != analysis.handwritten_lengths
+        )
 
-        # Use lengths already captured during analyze() — avoids a second LLM call
-        if analysis.handwritten_lengths and len(analysis.handwritten_lengths) == segment_count:
-            return analysis.handwritten_lengths, analysis.confidence, AgentTraceStep(
+        # Use lengths from analyze when count matches and no angle values leaked in
+        if (
+            filtered_lengths
+            and len(filtered_lengths) == segment_count
+            and not angles_leaked
+        ):
+            logger.info(
+                "orchestrator extract %s → using analyze lengths %s (no fallback)",
+                sketch_path.name,
+                filtered_lengths,
+            )
+            return filtered_lengths, analysis.confidence, AgentTraceStep(
                 step="extract",
                 status="completed",
-                message=f"Extracted {len(analysis.handwritten_lengths)} lengths from analyze step (no extra LLM call)",
-                data={"extracted_lengths": analysis.handwritten_lengths, "confidence": analysis.confidence, "source": "analyze"},
+                message=f"Extracted {len(filtered_lengths)} lengths from analyze step (no extra LLM call)",
+                data={
+                    "extracted_lengths": filtered_lengths,
+                    "confidence": analysis.confidence,
+                    "source": "analyze",
+                },
             )
 
-        # Fallback: second LLM call with segment count hint when analyze didn't get the right count
+        # Fallback: focused re-read when count is wrong or angle annotations were mixed in
+        reason = "angle annotations filtered" if angles_leaked else "length count mismatch"
+        logger.info(
+            "orchestrator extract %s → fallback LLM (%s: have %d lengths, need %d segments)",
+            sketch_path.name,
+            reason,
+            len(filtered_lengths),
+            segment_count,
+        )
         lengths, confidence = self.analyzer.extract_lengths(sketch_path, segment_count)
 
-        if not lengths and analysis.handwritten_lengths:
+        if not lengths and filtered_lengths:
+            lengths = filtered_lengths
+            confidence = analysis.confidence
+        elif not lengths and analysis.handwritten_lengths:
             lengths = analysis.handwritten_lengths
             confidence = analysis.confidence
 

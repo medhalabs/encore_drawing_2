@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { MatchResult } from "@/lib/api";
-import { apiUrl, downloadJson } from "@/lib/api";
+import { apiUrl, downloadJson, submitFeedback } from "@/lib/api";
 import SideBySideViewer from "./SideBySideViewer";
 import JsonPreview from "./JsonPreview";
 import CorrectionPanel from "./CorrectionPanel";
@@ -60,9 +60,28 @@ function ScoreBreakdownPanel({ result }: { result: MatchResult }) {
 export default function MatchResults({ result, onResultUpdate }: Props) {
   const [showCorrection, setShowCorrection] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [thumbsState, setThumbsState] = useState<"idle" | "loading" | "done">("idle");
   const confidencePct = Math.round(result.confidence * 100);
   const master = result.matched_master;
   const noMatch = result.no_match || !master;
+
+  async function handleThumbsUp() {
+    if (!master || thumbsState !== "idle") return;
+    setThumbsState("loading");
+    try {
+      await submitFeedback({
+        job_id: result.job_id,
+        master_key: master.key,
+        lengths: result.extracted_lengths,
+        note: "thumbs-up confirmation",
+      });
+      setThumbsState("done");
+      setSavedMessage(`✓ Saved as training example for ${master.name || master.key}`);
+    } catch {
+      setThumbsState("idle");
+      setSavedMessage("Failed to save training example — please try again.");
+    }
+  }
 
   if (noMatch) {
     return (
@@ -169,6 +188,18 @@ export default function MatchResults({ result, onResultUpdate }: Props) {
           >
             {confidencePct}% confidence
           </span>
+          <button
+            onClick={handleThumbsUp}
+            disabled={thumbsState !== "idle"}
+            title="This match is correct — save for training"
+            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors flex items-center gap-1.5 ${
+              thumbsState === "done"
+                ? "border-emerald-600 bg-emerald-900/40 text-emerald-300 cursor-default"
+                : "border-slate-600 hover:border-emerald-500 hover:text-emerald-300 disabled:opacity-50 disabled:cursor-wait"
+            }`}
+          >
+            {thumbsState === "done" ? "👍 Saved for training" : thumbsState === "loading" ? "Saving…" : "👍 Correct"}
+          </button>
           <button
             onClick={() => setShowCorrection((v) => !v)}
             className="px-4 py-2 rounded-lg border border-slate-600 hover:border-slate-400 text-sm font-medium transition-colors"

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     ollama_embed_base_url: str = "https://api.ollama.cloud"
     ollama_api_key: str = ""
     ollama_vision_model: str = "gemma4:31b-cloud"        # used for compare (accuracy matters)
-    ollama_analyze_model: str = "gemma3:12b-cloud"         # used for analyze (speed matters)
+    ollama_analyze_model: str = "gemma3:27b-cloud"         # used for analyze (speed matters)
     ollama_llm_text_model: str = "gpt-oss:120b-cloud"
     ollama_embed_model: str = "nomic-embed-text"
 
@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://encore:encore@localhost:5455/encore_drawings"
     redis_url: str = "redis://localhost:6377/0"
     redis_cache_ttl_seconds: int = 86400
+    log_level: str = "INFO"
 
     min_vision_score: float = 0.72
     no_match_vision_threshold: float = 0.55

@@ -60,6 +60,13 @@ class MatchService:
         trace: list[AgentTraceStep] = []
         warnings: list[str] = []
 
+        logger.info(
+            "process_match start job=%s file=%s use_llm=%s",
+            job_id,
+            original_filename,
+            use_llm,
+        )
+
         upload_step = AgentTraceStep(
             step="upload",
             status="completed",
@@ -82,7 +89,10 @@ class MatchService:
             step="preprocess",
             status="completed",
             message="OpenCV: ruled lines removed, sketch isolated",
-            data={"preprocessed_image_url": f"/api/v1/match/{job_id}/preprocessed"},
+            data={
+                "original_image_url": f"/api/v1/match/{job_id}/upload",
+                "preprocessed_image_url": f"/api/v1/match/{job_id}/preprocessed",
+            },
         )
         trace.append(preprocess_step)
         await self._emit(preprocess_step, on_step)
@@ -104,6 +114,13 @@ class MatchService:
 
         if fast_master is not None:
             mode_note = "DL-only mode" if dl_only_mode else "skipping LLM compare"
+            logger.info(
+                "process_match %s fast path → %s (%.0f%%) %s",
+                job_id,
+                fast_master.key,
+                fast_confidence * 100,
+                mode_note,
+            )
             clf_step = AgentTraceStep(
                 step="classify",
                 status="completed",
@@ -150,6 +167,7 @@ class MatchService:
             return result
         else:
             # ── Full LLM path ───────────────────────────────────────────
+            logger.info("process_match %s full LLM path", job_id)
             analysis, step = self.orchestrator.analyze_sketch(sketch_path)
             trace.append(step)
             await self._emit(step, on_step)
@@ -174,6 +192,7 @@ class MatchService:
 
         # No match — return early with no_match=True
         if master is None:
+            logger.info("process_match %s → no_match", job_id)
             result = MatchResult(
                 job_id=job_id,
                 matched_master=None,
@@ -237,6 +256,13 @@ class MatchService:
         )
         self._results[job_id] = result
         await db_service.save_match(result, str(sketch_path))
+        logger.info(
+            "process_match %s done → master=%s confidence=%.3f lengths=%s",
+            job_id,
+            master.key,
+            result.confidence,
+            lengths,
+        )
         return result
 
     async def process_match_stream(
