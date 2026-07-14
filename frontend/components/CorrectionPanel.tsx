@@ -104,6 +104,22 @@ export default function CorrectionPanel({ result, onCorrected, onCancel }: Props
             </option>
           ))}
         </select>
+
+        {/* Live preview of the currently-selected master — cross-verify before saving */}
+        {masterKey && (
+          <div className="mt-2">
+            <p className="text-xs text-slate-500 mb-1">Preview of selected master</p>
+            <div className="rounded-lg bg-white p-2 flex items-center justify-center" style={{ height: 160 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                key={masterKey}
+                src={apiUrl(`/api/v1/masters/${masterKey}/image`)}
+                alt={masterKey}
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div>

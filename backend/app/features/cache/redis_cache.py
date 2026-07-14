@@ -1,11 +1,14 @@
 import hashlib
 import json
+import logging
 from typing import Any
 
 import redis
 import redis.asyncio as aioredis
 
 from app.config.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 _redis_async: aioredis.Redis | None = None
 _redis_sync: redis.Redis | None = None
@@ -53,7 +56,11 @@ def build_vision_cache_key(prompt: str, image_paths: list) -> str:
 def cache_get_sync(key: str) -> dict | None:
     if _redis_sync is None:
         return None
-    raw = _redis_sync.get(f"vision:{key}")
+    try:
+        raw = _redis_sync.get(f"vision:{key}")
+    except redis.RedisError as e:
+        logger.warning("Redis cache get failed, continuing without cache: %s", e)
+        return None
     if not raw:
         return None
     return json.loads(raw)
@@ -62,13 +69,16 @@ def cache_get_sync(key: str) -> dict | None:
 def cache_set_sync(key: str, value: Any, ttl_seconds: int, image_paths: list | None = None) -> None:
     if _redis_sync is None:
         return
-    _redis_sync.set(f"vision:{key}", json.dumps(value), ex=ttl_seconds)
-    # Store reverse index: image_hash → cache_key so we can invalidate by image
-    if image_paths:
-        for p in image_paths:
-            img_hash = hash_file(p)
-            _redis_sync.sadd(f"img_keys:{img_hash}", f"vision:{key}")
-            _redis_sync.expire(f"img_keys:{img_hash}", ttl_seconds)
+    try:
+        _redis_sync.set(f"vision:{key}", json.dumps(value), ex=ttl_seconds)
+        # Store reverse index: image_hash → cache_key so we can invalidate by image
+        if image_paths:
+            for p in image_paths:
+                img_hash = hash_file(p)
+                _redis_sync.sadd(f"img_keys:{img_hash}", f"vision:{key}")
+                _redis_sync.expire(f"img_keys:{img_hash}", ttl_seconds)
+    except redis.RedisError as e:
+        logger.warning("Redis cache set failed, continuing without cache: %s", e)
 
 
 def build_embed_cache_key(model: str, text: str) -> str:
@@ -78,7 +88,11 @@ def build_embed_cache_key(model: str, text: str) -> str:
 def cache_get_embed_sync(key: str) -> list[float] | None:
     if _redis_sync is None:
         return None
-    raw = _redis_sync.get(f"embed:{key}")
+    try:
+        raw = _redis_sync.get(f"embed:{key}")
+    except redis.RedisError as e:
+        logger.warning("Redis embed cache get failed, continuing without cache: %s", e)
+        return None
     if not raw:
         return None
     return json.loads(raw)
@@ -87,7 +101,10 @@ def cache_get_embed_sync(key: str) -> list[float] | None:
 def cache_set_embed_sync(key: str, value: list[float], ttl_seconds: int) -> None:
     if _redis_sync is None:
         return
-    _redis_sync.set(f"embed:{key}", json.dumps(value), ex=ttl_seconds)
+    try:
+        _redis_sync.set(f"embed:{key}", json.dumps(value), ex=ttl_seconds)
+    except redis.RedisError as e:
+        logger.warning("Redis embed cache set failed, continuing without cache: %s", e)
 
 
 def invalidate_image_cache(image_path) -> int:
@@ -98,13 +115,17 @@ def invalidate_image_cache(image_path) -> int:
     """
     if _redis_sync is None:
         return 0
-    img_hash = hash_file(image_path)
-    index_key = f"img_keys:{img_hash}"
-    cache_keys = _redis_sync.smembers(index_key)
-    if not cache_keys:
+    try:
+        img_hash = hash_file(image_path)
+        index_key = f"img_keys:{img_hash}"
+        cache_keys = _redis_sync.smembers(index_key)
+        if not cache_keys:
+            return 0
+        deleted = _redis_sync.delete(*cache_keys, index_key)
+        return deleted
+    except redis.RedisError as e:
+        logger.warning("Redis cache invalidation failed: %s", e)
         return 0
-    deleted = _redis_sync.delete(*cache_keys, index_key)
-    return deleted
 
 
 async def ping_redis() -> bool:

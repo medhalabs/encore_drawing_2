@@ -136,7 +136,18 @@ def _pipeline(bgr: np.ndarray) -> np.ndarray:
     # ── 9. Invert to white background / dark strokes (matches training images) ─
     binary = cv2.bitwise_not(binary)
 
-    # ── 10. Crop to content ───────────────────────────────────────────────────
+    # ── 10. Isolate the profile: drop floating dimension numbers / annotations ─
+    # The single biggest source of noise on real client sketches is the
+    # handwritten dimension text ("90", "260", "500", …) sitting beside the
+    # profile. It is what the classifier never learned to ignore. Numbers are
+    # small connected components separate from the long profile polyline, so we
+    # bridge stroke gaps (making the profile one component) and then remove every
+    # component that is small relative to the drawing. Large structure — the
+    # profile and even a stray table line — is always kept, so we never risk
+    # deleting the shape itself.
+    binary = _isolate_profile(binary)
+
+    # ── 11. Crop to content ───────────────────────────────────────────────────
     binary = _crop_to_content(binary)
 
     return binary
@@ -226,6 +237,60 @@ def _strip_text_blobs(binary: np.ndarray,
         if aspect >= min_aspect or area >= large_area_px:
             keep[labels == lbl] = 255
     return cv2.bitwise_not(keep)
+
+
+def _isolate_profile(
+    binary: np.ndarray,
+    bridge_iters: int = 2,
+    min_diag_frac: float = 0.22,
+) -> np.ndarray:
+    """
+    Keep the profile line-work, drop floating dimension numbers / small text.
+
+    Input/output: white background (255), dark strokes (0).
+
+    Method:
+      1. Dilate the ink so a slightly-broken profile becomes ONE component
+         (numbers stay separate — they don't touch the profile line).
+      2. Measure each component's bounding-box diagonal.
+      3. Keep every component whose diagonal is a meaningful fraction of the
+         drawing's own diagonal; erase the small ones (digits, arrowheads,
+         "c/B" notes). Original stroke thickness is preserved for what we keep.
+
+    Deliberately conservative: it removes only clearly-small blobs, so a large
+    table line or a fragmented profile piece survives rather than risk deleting
+    the shape. It is a no-op when there is only one component.
+    """
+    ink = cv2.bitwise_not(binary)
+    if int(ink.sum()) == 0:
+        return binary
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    bridged = cv2.dilate(ink, k, iterations=bridge_iters)
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(bridged, connectivity=8)
+    if num <= 2:  # background + a single component — nothing to isolate
+        return binary
+
+    h, w = binary.shape
+    img_diag = float(np.hypot(h, w))
+    diag_thresh = min_diag_frac * img_diag
+
+    keep_labels = []
+    for lbl in range(1, num):
+        bw = stats[lbl, cv2.CC_STAT_WIDTH]
+        bh = stats[lbl, cv2.CC_STAT_HEIGHT]
+        if float(np.hypot(bw, bh)) >= diag_thresh:
+            keep_labels.append(lbl)
+
+    if not keep_labels:
+        # Everything is "small" (e.g. one tiny sketch) — keep the largest so we
+        # never return an empty image.
+        largest = max(range(1, num), key=lambda l: stats[l, cv2.CC_STAT_AREA])
+        keep_labels = [largest]
+
+    keep_mask = np.isin(labels, keep_labels)
+    kept_ink = np.where(keep_mask, ink, 0).astype(np.uint8)
+    return cv2.bitwise_not(kept_ink)
 
 
 def _crop_to_content(binary: np.ndarray, pad_frac: float = 0.08) -> np.ndarray:

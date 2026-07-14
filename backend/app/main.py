@@ -56,6 +56,8 @@ feedback_service = FeedbackService(feedback_store, match_service)
 
 async def _load_feedback_entries() -> list:
     feedback_store.load()
+    if not db_service.enabled:
+        return feedback_store.entries
     db_entries = await db_service.load_corrections()
     return db_entries if db_entries else feedback_store.entries
 
