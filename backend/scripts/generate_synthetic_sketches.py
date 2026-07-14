@@ -147,7 +147,7 @@ def render_sketch(lengths, angles, first_angle, flip_h=False, size=560):
     ink_choice = random.choice(["black", "black", "blue", "dark"])
     ink = {"black": (20, 20, 20), "blue": (30, 45, random.randint(120, 200)),
            "dark": (50, 50, 55)}[ink_choice]
-    width = random.choice([2, 2, 3, 3, 4, 5, 7, 9])
+    width = random.choice([2, 2, 3, 3, 4, 5, 7])
     wobble = random.uniform(0.8, 3.2) * (1 + width / 8)
 
     sketchy = random.random() < 0.25  # some people retrace their lines
@@ -159,9 +159,9 @@ def render_sketch(lengths, angles, first_angle, flip_h=False, size=560):
         if sketchy:
             draw_stroke(d, wobble_segment(p0, p1e, wobble * 1.4), max(width - 1, 1), ink)
 
-    # dimension numbers beside segment midpoints — sometimes TOUCHING the line,
-    # like real thick-marker sketches where digits merge with the profile after
-    # preprocessing (the classifier must see through the merged blobs)
+    # dimension numbers beside segment midpoints
+    # (an experiment placing digits touching the line tested WORSE — 45% vs 52%
+    # top-1 on the client eval — keep numbers neatly beside the segments)
     for i in range(len(spts) - 1):
         if random.random() < 0.15:
             continue
@@ -169,10 +169,7 @@ def render_sketch(lengths, angles, first_angle, flip_h=False, size=560):
         mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
         L = math.hypot(p1[0] - p0[0], p1[1] - p0[1]) or 1
         px, py = -(p1[1] - p0[1]) / L, (p1[0] - p0[0]) / L
-        if random.random() < 0.3:
-            off = random.uniform(2, 12) * random.choice([1, -1])   # touching/overlapping
-        else:
-            off = random.uniform(16, 34) * random.choice([1, -1])  # neatly beside
+        off = random.uniform(16, 34) * random.choice([1, -1])
         label = str(int(lengths[i] * random.choice([1, 1, 1, 10, 0.1]) if random.random() < 0.2
                         else random.choice([10, 20, 30, 40, 50, 60, 75, 90, 100, 130, 150,
                                             200, 245, 260, 300, 430, 500, 600])))
