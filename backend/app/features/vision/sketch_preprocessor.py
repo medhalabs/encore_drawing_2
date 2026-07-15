@@ -92,6 +92,13 @@ def save_preprocessed(image_path: Path, output_path: Path) -> Path:
 
 def _pipeline(bgr: np.ndarray) -> np.ndarray:
     """Real-photo path only — clean digital images are handled in preprocess_sketch."""
+    # Small screenshot crops (< ~500px) get destroyed by morphology kernels tuned
+    # for full phone photos — digits merge into the profile as blobs. Upscale
+    # first so strokes and text are separable at the kernel scale.
+    h0, w0 = bgr.shape[:2]
+    if min(h0, w0) < 500:
+        scale = 800 / min(h0, w0)
+        bgr = cv2.resize(bgr, (int(w0 * scale), int(h0 * scale)), interpolation=cv2.INTER_CUBIC)
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
     # ── 1. Background estimation via morphological CLOSE ─────────────────────
