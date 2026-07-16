@@ -1,0 +1,471 @@
+{
+  "materials": [
+    {
+      "id": 15,
+      "name": "Colorbond",
+      "density": 0.55
+    },
+    {
+      "id": 16,
+      "name": "COLORBOND MATT",
+      "density": 0.55
+    },
+    {
+      "id": 17,
+      "name": "COLORBOND ULTRA",
+      "density": 0.55
+    },
+    {
+      "id": 18,
+      "name": "ZINCALUME 0.55",
+      "density": 0.55
+    },
+    {
+      "id": 19,
+      "name": "ZINCALUME 0.75",
+      "density": 0.75
+    },
+    {
+      "id": 20,
+      "name": "ZINCALUME 0.95",
+      "density": 0.95
+    },
+    {
+      "id": 21,
+      "name": "ZINCALUME 1.2",
+      "density": 1.2
+    },
+    {
+      "id": 22,
+      "name": "GALVANISED 0.55",
+      "density": 0.55
+    },
+    {
+      "id": 23,
+      "name": "GALVANISED 0.75",
+      "density": 0.75
+    },
+    {
+      "id": 24,
+      "name": "GALVANISED 0.95",
+      "density": 0.95
+    },
+    {
+      "id": 25,
+      "name": "GALVANISED 1.2",
+      "density": 1.2
+    },
+    {
+      "id": 26,
+      "name": "STAINLESS STEEL",
+      "density": 0.55
+    },
+    {
+      "id": 27,
+      "name": "Colorbond Metallic",
+      "density": 0.55
+    },
+    {
+      "id": 28,
+      "name": "COPPER",
+      "density": 0.55
+    },
+    {
+      "id": 29,
+      "name": "Colorbondtest",
+      "density": 0.55
+    },
+    {
+      "id": 33,
+      "name": "HERITAGE GAL",
+      "density": 0.55
+    },
+    {
+      "id": 36,
+      "name": "CORTEN STEEL",
+      "density": 1.6
+    },
+    {
+      "id": 40,
+      "name": "colorbond-colorbond",
+      "density": 0.55
+    }
+  ],
+  "colors": [
+    {
+      "id": 83,
+      "name": "Ashwood",
+      "material_id": 15
+    },
+    {
+      "id": 84,
+      "name": "Basalt",
+      "material_id": 15
+    },
+    {
+      "id": 85,
+      "name": "Blue Gum",
+      "material_id": 15
+    },
+    {
+      "id": 86,
+      "name": "Cattai Green",
+      "material_id": 15
+    },
+    {
+      "id": 87,
+      "name": "Classic Cream",
+      "material_id": 15
+    },
+    {
+      "id": 88,
+      "name": "Cottage Green",
+      "material_id": 15
+    },
+    {
+      "id": 89,
+      "name": "Cove",
+      "material_id": 15
+    },
+    {
+      "id": 90,
+      "name": "Deep Ocean",
+      "material_id": 15
+    },
+    {
+      "id": 91,
+      "name": "Dover White",
+      "material_id": 15
+    },
+    {
+      "id": 92,
+      "name": "Dune",
+      "material_id": 15
+    },
+    {
+      "id": 93,
+      "name": "Evening Haze",
+      "material_id": 15
+    },
+    {
+      "id": 94,
+      "name": "Gully",
+      "material_id": 15
+    },
+    {
+      "id": 95,
+      "name": "Ironstone",
+      "material_id": 15
+    },
+    {
+      "id": 96,
+      "name": "Jasper",
+      "material_id": 15
+    },
+    {
+      "id": 97,
+      "name": "Mangrove",
+      "material_id": 15
+    },
+    {
+      "id": 98,
+      "name": "Manor Red",
+      "material_id": 15
+    },
+    {
+      "id": 99,
+      "name": ".",
+      "material_id": 15
+    },
+    {
+      "id": 100,
+      "name": "Night Sky",
+      "material_id": 15
+    },
+    {
+      "id": 101,
+      "name": "Pale Eucalypt",
+      "material_id": 15
+    },
+    {
+      "id": 102,
+      "name": "Paperbark",
+      "material_id": 15
+    },
+    {
+      "id": 103,
+      "name": "Shale Grey",
+      "material_id": 15
+    },
+    {
+      "id": 104,
+      "name": "Sign White",
+      "material_id": 15
+    },
+    {
+      "id": 105,
+      "name": "Southerly",
+      "material_id": 15
+    },
+    {
+      "id": 106,
+      "name": "Surfmist",
+      "material_id": 15
+    },
+    {
+      "id": 107,
+      "name": "Terrain",
+      "material_id": 15
+    },
+    {
+      "id": 108,
+      "name": "Wallaby",
+      "material_id": 15
+    },
+    {
+      "id": 109,
+      "name": "Whitehaven",
+      "material_id": 15
+    },
+    {
+      "id": 110,
+      "name": "Windspray",
+      "material_id": 15
+    },
+    {
+      "id": 111,
+      "name": "Woodland Grey",
+      "material_id": 15
+    },
+    {
+      "id": 112,
+      "name": "MATT BASALT",
+      "material_id": 16
+    },
+    {
+      "id": 113,
+      "name": "MATT BLUE GUM",
+      "material_id": 16
+    },
+    {
+      "id": 114,
+      "name": "MATT DUNE",
+      "material_id": 16
+    },
+    {
+      "id": 115,
+      "name": "MIDNIGHT MATT",
+      "material_id": 16
+    },
+    {
+      "id": 116,
+      "name": "MATT MONUMENT",
+      "material_id": 16
+    },
+    {
+      "id": 117,
+      "name": "MATT NIGHTSKY",
+      "material_id": 16
+    },
+    {
+      "id": 118,
+      "name": "MATT SHALE GREY",
+      "material_id": 16
+    },
+    {
+      "id": 119,
+      "name": "MATT SURFMIST",
+      "material_id": 16
+    },
+    {
+      "id": 120,
+      "name": "ULTRA DEEP OCEAN",
+      "material_id": 17
+    },
+    {
+      "id": 121,
+      "name": "ULTRA DUNE",
+      "material_id": 17
+    },
+    {
+      "id": 122,
+      "name": "ULTRA MONUMENT",
+      "material_id": 17
+    },
+    {
+      "id": 123,
+      "name": "ULTRA SHALE GREY",
+      "material_id": 17
+    },
+    {
+      "id": 124,
+      "name": "ULTRA SURFMIST",
+      "material_id": 17
+    },
+    {
+      "id": 125,
+      "name": "ULTRA WALLABY",
+      "material_id": 17
+    },
+    {
+      "id": 126,
+      "name": "ULTRA WINDSPRAY",
+      "material_id": 17
+    },
+    {
+      "id": 127,
+      "name": "ULTRA WOODLAND GREY",
+      "material_id": 17
+    },
+    {
+      "id": 128,
+      "name": "ZINCALUME 0.55",
+      "material_id": 18
+    },
+    {
+      "id": 129,
+      "name": "ZINCALUME",
+      "material_id": 19
+    },
+    {
+      "id": 130,
+      "name": "ZINCALUME",
+      "material_id": 20
+    },
+    {
+      "id": 131,
+      "name": "ZINCALUME",
+      "material_id": 21
+    },
+    {
+      "id": 132,
+      "name": "GALVANISED 0.55",
+      "material_id": 22
+    },
+    {
+      "id": 133,
+      "name": "GALVANISED",
+      "material_id": 23
+    },
+    {
+      "id": 134,
+      "name": "GALVANISED",
+      "material_id": 24
+    },
+    {
+      "id": 135,
+      "name": "GALVANISED",
+      "material_id": 25
+    },
+    {
+      "id": 136,
+      "name": "STAINLESS STEEL 304 2B 0.55",
+      "material_id": 26
+    },
+    {
+      "id": 137,
+      "name": "MATT IRON STONE",
+      "material_id": 16
+    },
+    {
+      "id": 138,
+      "name": "RHEA",
+      "material_id": 27
+    },
+    {
+      "id": 139,
+      "name": "ASTRO",
+      "material_id": 27
+    },
+    {
+      "id": 140,
+      "name": "COPPER",
+      "material_id": 28
+    },
+    {
+      "id": 141,
+      "name": "CORTEN RED",
+      "material_id": 15
+    },
+    {
+      "id": 142,
+      "name": "TestColor",
+      "material_id": 15
+    },
+    {
+      "id": 145,
+      "name": "Monument",
+      "material_id": 15
+    },
+    {
+      "id": 150,
+      "name": "Test",
+      "material_id": 15
+    },
+    {
+      "id": 152,
+      "name": "AGED COPPER",
+      "material_id": 15
+    },
+    {
+      "id": 153,
+      "name": "MATAI",
+      "material_id": 15
+    },
+    {
+      "id": 154,
+      "name": "test1",
+      "material_id": 15
+    },
+    {
+      "id": 161,
+      "name": "HERITAGE GAL",
+      "material_id": 33
+    },
+    {
+      "id": 162,
+      "name": "COSMIC",
+      "material_id": 27
+    },
+    {
+      "id": 174,
+      "name": "ARIES",
+      "material_id": 27
+    },
+    {
+      "id": 176,
+      "name": "CORTEN STEEL",
+      "material_id": 36
+    },
+    {
+      "id": 177,
+      "name": "WENGE",
+      "material_id": 15
+    },
+    {
+      "id": 179,
+      "name": "STAINLESS STEEL 316 0.55",
+      "material_id": 26
+    },
+    {
+      "id": 180,
+      "name": "WEATHERED IRON",
+      "material_id": 15
+    },
+    {
+      "id": 181,
+      "name": "WEATHERED IRON",
+      "material_id": 15
+    },
+    {
+      "id": 182,
+      "name": "WEATHERED IRON",
+      "material_id": 15
+    },
+    {
+      "id": 183,
+      "name": "WEATHERED IRON",
+      "material_id": 15
+    }
+  ]
+}

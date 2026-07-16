@@ -17,19 +17,5 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    container_name: encore-redis
-    ports:
-      - "6377:6379"
-    volumes:
-      - encore_redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
 volumes:
   encore_pg_data:
-  encore_redis_data:

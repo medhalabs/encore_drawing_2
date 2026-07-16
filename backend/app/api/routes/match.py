@@ -17,7 +17,6 @@ def get_match_service() -> MatchService:
 @router.post("/stream")
 async def match_drawing_stream(
     file: UploadFile = File(...),
-    use_llm: bool = Form(True),
 ):
     settings = get_settings()
     if not file.filename:
@@ -31,7 +30,7 @@ async def match_drawing_stream(
     sketch_path = service.save_upload(file.filename, content)
 
     async def event_generator():
-        async for event in service.process_match_stream(sketch_path, file.filename, use_llm=use_llm):
+        async for event in service.process_match_stream(sketch_path, file.filename):
             event_type = event["type"]
             payload = event["payload"]
             data = json.dumps(payload, default=str)
@@ -51,7 +50,6 @@ async def match_drawing_stream(
 @router.post("")
 async def match_drawing(
     file: UploadFile = File(...),
-    use_llm: bool = Form(True),
 ):
     settings = get_settings()
     if not file.filename:
@@ -65,7 +63,7 @@ async def match_drawing(
     sketch_path = service.save_upload(file.filename, content)
 
     try:
-        result = await service.process_match(sketch_path, file.filename, use_llm=use_llm)
+        result = await service.process_match(sketch_path, file.filename)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

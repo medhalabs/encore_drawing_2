@@ -35,6 +35,9 @@ class DatabaseService:
             embedded = 0
             async with db_session._session_factory() as session:
                 added = await seed.seed_masters_if_empty(session, catalog)
+                mats, cols = await seed.seed_materials_colors_if_empty(session)
+                if mats or cols:
+                    print(f"DB seeded: {mats} materials, {cols} colors")
                 imported = await seed.import_corrections_from_manifest(session, file_feedback_entries)
                 if embedding_service:
                     try:

@@ -18,16 +18,6 @@ class FeedbackService:
         entry, filled_json = self.store.save_correction(request, previous_key)
         await db_service.save_correction(entry, filled_json)
 
-        # Invalidate Redis vision cache for this sketch so the corrected
-        # master is used if the same image is uploaded again
-        upload_path = self.match_service.settings.upload_path
-        for ext in [".png", ".jpg", ".jpeg", ".webp"]:
-            candidate = upload_path / f"{request.job_id}{ext}"
-            if candidate.exists():
-                from app.features.cache import redis_cache
-                redis_cache.invalidate_image_cache(candidate)
-                break
-
         from app.main import retriever, retrain_service
         entries = await db_service.load_corrections()
         if entries:

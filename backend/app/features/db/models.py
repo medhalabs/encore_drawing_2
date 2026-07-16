@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,6 +44,25 @@ class MatchJob(Base):
     score_breakdown: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     agent_trace: Mapped[list] = mapped_column(JSONB, default=list)
     warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Material(Base):
+    __tablename__ = "materials"
+
+    # IDs come from the Encore system (Materials and colors.xlsx) — not auto-generated
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    density: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Color(Base):
+    __tablename__ = "colors"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

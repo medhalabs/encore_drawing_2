@@ -11,12 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config.settings import get_settings
 from app.features.agent.orchestrator import MatchOrchestrator
-from app.features.embeddings.service import EmbeddingService
-from app.features.feedback.store import FeedbackStore
+from app.features.classifier.efficientnet import EfficientNetClassifier
+from app.features.classifier.retrain_service import RetrainService
 from app.features.masters.catalog import MasterCatalog
 from app.features.ollama.client import OllamaService
-from app.features.rag.retriever import MasterRetriever
-from app.features.vision.profile_comparator import ProfileComparator
 from app.features.vision.sketch_analyzer import SketchAnalyzer
 from app.services.match_service import MatchService
 
@@ -45,22 +43,17 @@ async def main():
 
     catalog = MasterCatalog(settings)
     catalog.load()
-    feedback_store = FeedbackStore(settings, catalog)
-    feedback_store.load()
     ollama = OllamaService(settings)
-    embedding_service = EmbeddingService(settings, ollama, catalog)
-    retriever = MasterRetriever(catalog)
-    retriever.set_feedback_entries(feedback_store.entries)
-    orchestrator = MatchOrchestrator(
-        settings,
-        SketchAnalyzer(ollama),
-        retriever,
-        ProfileComparator(ollama),
-        ollama,
-        feedback_store,
-        embedding_service,
-    )
-    service = MatchService(settings, catalog, orchestrator)
+    orchestrator = MatchOrchestrator(settings, SketchAnalyzer(ollama))
+
+    model_dir = Path(__file__).resolve().parents[1] / "data" / "models"
+    label_index = sorted(m.key for m in catalog.masters)
+    classifier = EfficientNetClassifier(model_dir, label_index)
+    classifier._key_to_idx = {k: i for i, k in enumerate(label_index)}
+    RetrainService(classifier, settings.master_drawings_dir, settings.feedback_path).update_class_counts()
+    classifier.load_if_ready()
+
+    service = MatchService(settings, catalog, orchestrator, classifier=classifier)
 
     images = sorted(test_dir.glob("*.png"))
     correct = 0

@@ -7,7 +7,6 @@ from pathlib import Path
 from ollama import Client
 
 from app.config.settings import Settings
-from app.features.cache import redis_cache
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +15,9 @@ class OllamaService:
     def __init__(self, settings: Settings):
         self.settings = settings
         auth_headers = {"Authorization": f"Bearer {settings.ollama_api_key}"}
-        self.client = Client(host=settings.ollama_base_url, headers=auth_headers)
-        self.embed_client = Client(host=settings.ollama_embed_base_url, headers=auth_headers)
+        # Without a timeout a single stalled cloud response hangs the whole pipeline
+        self.client = Client(host=settings.ollama_base_url, headers=auth_headers, timeout=300.0)
+        self.embed_client = Client(host=settings.ollama_embed_base_url, headers=auth_headers, timeout=60.0)
 
     @staticmethod
     def _image_to_base64(path: Path) -> str:
@@ -47,20 +47,28 @@ class OllamaService:
         )
         return response["message"]["content"]
 
-    def chat_vision(self, prompt: str, image_paths: list[Path], system: str = "", model: str = "") -> str:
+    def chat_vision(self, prompt: str, image_paths: list[Path], system: str = "", model: str = "", think: bool = False) -> str:
         images = [self._image_to_base64(p) for p in image_paths]
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt, "images": images})
+        # Only pass `think` when enabled — some models reject the parameter outright
+        extra = {"think": True} if think else {}
         response = self.client.chat(
             model=model or self.settings.ollama_vision_model,
             messages=messages,
             stream=False,
+            # Deterministic: same image must yield the same reading every time
+            options={"temperature": 0},
+            **extra,
         )
+        thinking = response["message"].get("thinking")
+        if thinking:
+            logger.debug("chat_vision thinking (%d chars): %s", len(thinking), thinking[:300])
         return response["message"]["content"]
 
-    def chat_vision_json(self, prompt: str, image_paths: list[Path], system: str = "", model: str = "") -> dict:
+    def chat_vision_json(self, prompt: str, image_paths: list[Path], system: str = "", model: str = "", think: bool = False) -> dict:
         resolved_model = model or self.settings.ollama_vision_model
         logger.info(
             "chat_vision_json model=%s images=%s prompt_len=%d",
@@ -68,23 +76,17 @@ class OllamaService:
             [p.name for p in image_paths],
             len(prompt),
         )
-        cache_key = redis_cache.build_vision_cache_key(prompt, image_paths)
-        cached = redis_cache.cache_get_sync(cache_key)
-        if cached is not None:
-            logger.debug("Redis cache hit for vision JSON (%s)", [p.name for p in image_paths])
-            return cached
         last_err: Exception | None = None
         content = ""
         for attempt in range(3):
             try:
-                content = self.chat_vision(prompt, image_paths, system, model=model)
+                content = self.chat_vision(prompt, image_paths, system, model=model, think=think)
                 parsed = self._parse_json(content)
                 logger.debug(
                     "chat_vision_json OK attempt %d/3 keys=%s",
                     attempt + 1,
                     list(parsed.keys()),
                 )
-                redis_cache.cache_set_sync(cache_key, parsed, self.settings.redis_cache_ttl_seconds, image_paths)
                 return parsed
             except (json.JSONDecodeError, ValueError) as e:
                 last_err = e
@@ -101,13 +103,5 @@ class OllamaService:
         return self._parse_json(content)
 
     def embed(self, text: str) -> list[float]:
-        cache_key = redis_cache.build_embed_cache_key(self.settings.ollama_embed_model, text)
-        cached = redis_cache.cache_get_embed_sync(cache_key)
-        if cached is not None:
-            return cached
         response = self.embed_client.embed(model=self.settings.ollama_embed_model, input=text)
-        embedding = response["embeddings"][0]
-        redis_cache.cache_set_embed_sync(
-            cache_key, embedding, self.settings.redis_cache_ttl_seconds
-        )
-        return embedding
+        return response["embeddings"][0]

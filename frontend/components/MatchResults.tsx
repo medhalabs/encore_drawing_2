@@ -14,45 +14,14 @@ interface Props {
 
 function ScoreBreakdownPanel({ result }: { result: MatchResult }) {
   if (!result.score_breakdown) return null;
+  const confidence = result.score_breakdown.vision_score;
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm">
-      <h3 className="font-medium mb-3">Match score breakdown</h3>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div>
-          <p className="text-slate-500 text-xs">Retrieval</p>
-          <p className="font-medium">{result.score_breakdown.retrieval_score}</p>
-        </div>
-        <div>
-          <p className="text-slate-500 text-xs">Vector similarity</p>
-          <p className="font-medium">
-            {result.score_breakdown.vector_score != null
-              ? `${Math.round(result.score_breakdown.vector_score * 100)}%`
-              : "—"}
-          </p>
-        </div>
-        <div>
-          <p className="text-slate-500 text-xs">Vision shape</p>
-          <p
-            className={`font-medium ${result.score_breakdown.vision_score >= 0.65 ? "text-emerald-300" : "text-amber-300"}`}
-          >
-            {Math.round(result.score_breakdown.vision_score * 100)}%
-          </p>
-        </div>
-        <div>
-          <p className="text-slate-500 text-xs">Feedback boost</p>
-          <p className="font-medium">{result.score_breakdown.feedback_boost || "—"}</p>
-        </div>
-        <div>
-          <p className="text-slate-500 text-xs">Combined</p>
-          <p className="font-medium">{Math.round(result.score_breakdown.combined_score * 100)}%</p>
-        </div>
-      </div>
-      {result.score_breakdown.vision_score < 0.65 && (
-        <p className="text-amber-300 text-xs mt-3">
-          Vision shape match is below 65% — this match may be wrong. Use Correct this match.
-        </p>
-      )}
+      <h3 className="font-medium mb-3">Classifier confidence</h3>
+      <p className={`text-2xl font-semibold ${confidence >= 0.65 ? "text-emerald-300" : "text-amber-300"}`}>
+        {Math.round(confidence * 100)}%
+      </p>
     </div>
   );
 }

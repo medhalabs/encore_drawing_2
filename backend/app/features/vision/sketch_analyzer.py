@@ -7,6 +7,16 @@ from app.features.ollama.client import OllamaService
 
 logger = logging.getLogger(__name__)
 
+SEGMENT_ORDER_RULES = """
+SEGMENT ORDER (critical — never violate):
+- Trace the profile cross-section as ONE continuous path, starting from its LEFT-most endpoint
+  (if two endpoints are equally left, start from the upper one).
+- Walk the path segment by segment to the other end. Report lengths in EXACTLY that traversal order.
+- Assign each handwritten number to the segment it is written along or closest to.
+- NEVER list numbers in the order you happen to notice them, top-to-bottom reading order,
+  or biggest-first. Only the left-to-right path traversal order is valid.
+"""
+
 LENGTH_VS_ANGLE_RULES = """
 SEGMENT LENGTHS vs ANGLE ANNOTATIONS (critical):
 - handwritten_lengths = ONLY straight-segment length dimensions (numbers written beside/along a line run).
@@ -25,7 +35,8 @@ Extract ALL of the following in ONE pass:
 
 1. segment_count: number of straight segments in the cross-section profile. Count only segments whose LENGTH dimension you include in handwritten_lengths. Do NOT count curves, rounded corners, or junctions as separate segments. Do NOT count angle annotations.
 2. angles_estimate: list of bend angles annotated on the sketch (numbers with ° or arc symbols at corners). Best effort.
-3. handwritten_lengths: segment LENGTH numbers only, in drawing order (left-to-right or top-to-bottom). Read every length dimension — but exclude all angle annotations per rules below.
+3. handwritten_lengths: segment LENGTH numbers only, ordered by tracing the profile path from its left-most endpoint (rules below). Read every length dimension — but exclude all angle annotations.
+{SEGMENT_ORDER_RULES}
 {LENGTH_VS_ANGLE_RULES}
 4. part_class_hint: classify the profile shape into ONE of these categories:
    - Gutters: U-channel or trough shape, open at top, collects rainwater
@@ -125,7 +136,7 @@ class SketchAnalyzer:
         self.consensus_runs = consensus_runs
 
     def analyze(self, sketch_path: Path) -> SketchAnalysis:
-        # Use the fast analyze model (gemma3:4b) — speed matters here, accuracy comes from compare step
+        # Uses the configured analyze model (gemma4:31b-cloud) with reasoning enabled
         analyze_model = getattr(self.ollama.settings, "ollama_analyze_model", "")
         logger.info(
             "analyze %s model=%s consensus_runs=%d",
@@ -144,6 +155,7 @@ class SketchAnalyzer:
                     "with segment length dimensions written along straight runs."
                 ),
                 model=analyze_model,
+                think=self.ollama.settings.ollama_analyze_thinking,
             )
             results.append(_parse_analysis(data))
 
@@ -184,20 +196,23 @@ class SketchAnalyzer:
         """
         Re-reads lengths from sketch with the segment count as a hint.
         Only called as a fallback when analyze() didn't return enough lengths.
-        Avoids a second LLM call if Redis cache already has the analyze result.
         """
-        from app.features.cache import redis_cache
         prompt = f"""Read the handwritten segment LENGTH dimensions on this sketch image.
 The profile has {segment_count} straight segments. Return ONLY JSON:
 {{"handwritten_lengths": [number, ...], "angles_estimate": [number, ...], "confidence": 0.0-1.0}}
+{SEGMENT_ORDER_RULES}
 {LENGTH_VS_ANGLE_RULES}
-Order handwritten_lengths in drawing order. Use integers or decimals as written.
+Use integers or decimals as written.
 Return exactly {segment_count} segment lengths. Ignore every angle annotation."""
+        extract_model = (
+            getattr(self.ollama.settings, "ollama_analyze_model", "")
+            or self.ollama.settings.ollama_vision_model
+        )
         logger.info(
             "extract_lengths fallback for %s segment_count=%d model=%s",
             sketch_path.name,
             segment_count,
-            self.ollama.settings.ollama_vision_model,
+            extract_model,
         )
         data = self.ollama.chat_vision_json(
             prompt,
@@ -206,7 +221,8 @@ Return exactly {segment_count} segment lengths. Ignore every angle annotation.""
                 "You extract segment length dimensions from engineering sketches. "
                 "Numbers with degree symbols or arc notation at bends are angles — never lengths."
             ),
-            model=self.ollama.settings.ollama_vision_model,
+            model=extract_model,
+            think=self.ollama.settings.ollama_analyze_thinking,
         )
         angles = _safe_float_list(data.get("angles_estimate", []), label="angle")
         lengths = _filter_angle_lengths(

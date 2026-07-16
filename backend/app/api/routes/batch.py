@@ -42,7 +42,6 @@ class PageSelection(BaseModel):
 
 
 class ClassifyRequest(BaseModel):
-    use_llm: bool = True
     pages: list[PageSelection]
 
 
@@ -54,7 +53,6 @@ def _get_match_service():
 @router.post("/upload")
 async def batch_upload(
     file: UploadFile = File(...),
-    use_llm: bool = Form(True),
 ):
     """
     Upload a PDF or image containing multiple drawings.
@@ -79,11 +77,10 @@ async def batch_upload(
         raise HTTPException(status_code=422, detail="No drawings detected in file")
 
     logger.info(
-        "batch_upload id=%s file=%s crops=%d use_llm=%s",
+        "batch_upload id=%s file=%s crops=%d",
         batch_id,
         file.filename,
         len(crops),
-        use_llm,
     )
 
     # Save each crop
@@ -114,7 +111,6 @@ async def batch_upload(
             async for event in service.process_match_stream(
                 crop_path,
                 crop_path.name,
-                use_llm=use_llm,
             ):
                 if event["type"] == "result":
                     result_payload = event["payload"]
@@ -264,7 +260,7 @@ async def batch_classify(batch_id: str, req: ClassifyRequest):
         for i, crop_path in enumerate(crop_paths):
             result_payload = None
             async for event in service.process_match_stream(
-                crop_path, crop_path.name, use_llm=req.use_llm,
+                crop_path, crop_path.name,
             ):
                 if event["type"] == "result":
                     result_payload = event["payload"]

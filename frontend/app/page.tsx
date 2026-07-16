@@ -6,7 +6,7 @@ import MatchProgress, { type LiveTraceStep } from "@/components/MatchProgress";
 import MatchResults from "@/components/MatchResults";
 import { matchDrawingStream, type MatchResult } from "@/lib/api";
 
-const STEP_ORDER = ["upload", "preprocess", "classify", "analyze", "retrieve", "compare", "match", "extract", "validate"];
+const STEP_ORDER = ["upload", "preprocess", "classify", "analyze", "extract", "validate"];
 
 export default function HomePage() {
   const [file, setFile] = useState<File | null>(null);
@@ -15,7 +15,6 @@ export default function HomePage() {
   const [result, setResult] = useState<MatchResult | null>(null);
   const [liveTrace, setLiveTrace] = useState<LiveTraceStep[]>([]);
   const [currentStep, setCurrentStep] = useState<string | undefined>();
-  const [useLlm, setUseLlm] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
 
   const handleMatch = async () => {
@@ -49,7 +48,6 @@ export default function HomePage() {
           onError: (msg) => setError(msg),
         },
         abortRef.current.signal,
-        useLlm,
       );
       setResult(data);
       setLiveTrace(data.agent_trace.map((s) => ({ ...s })));
@@ -77,35 +75,6 @@ export default function HomePage() {
           {loading ? "Processing… watch pipeline on the right" : "Match Drawing"}
         </button>
 
-        {/* LLM toggle */}
-        <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3">
-          <div>
-            <p className="text-sm font-medium">
-              {useLlm ? "Full pipeline (DL + LLM)" : "DL only (fast)"}
-            </p>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {useLlm
-                ? "LLM used for matching + length extraction"
-                : "EfficientNet matches, LLM only reads the numbers"}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setUseLlm((v) => !v)}
-            disabled={loading}
-            className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-40 ${
-              useLlm ? "bg-blue-600" : "bg-slate-700"
-            }`}
-            aria-checked={useLlm}
-            role="switch"
-          >
-            <span
-              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${
-                useLlm ? "translate-x-5" : "translate-x-0"
-              }`}
-            />
-          </button>
-        </div>
         {error && (
           <div className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
             {error}

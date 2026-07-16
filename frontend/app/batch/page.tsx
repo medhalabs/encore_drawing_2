@@ -32,7 +32,6 @@ export default function BatchPage() {
   const [stage, setStage] = useState<Stage>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [useLlm, setUseLlm] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [processing, setProcessing] = useState(false);
 
@@ -120,7 +119,6 @@ export default function BatchPage() {
     setSelected(null);
 
     const body = {
-      use_llm: useLlm,
       pages: pages
         .filter((p) => p.boxes.length > 0)
         .map((p) => ({
@@ -358,21 +356,6 @@ export default function BatchPage() {
             </div>
 
             <div className="flex items-center gap-6">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <div
-                  className={`relative w-11 h-6 rounded-full transition-colors ${useLlm ? "bg-blue-600" : "bg-slate-700"}`}
-                  onClick={() => setUseLlm((v) => !v)}
-                >
-                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${useLlm ? "left-6" : "left-1"}`} />
-                </div>
-                <span className="text-sm text-slate-300">
-                  Use LLM for matching
-                  <span className="text-slate-500">
-                    {useLlm ? " — more accurate, ~1 min per drawing" : " — off: fast classifier only"}
-                  </span>
-                </span>
-              </label>
-
               <button onClick={reset} className="px-4 py-2 rounded-lg border border-slate-700 hover:border-slate-500 text-sm transition-colors">
                 Start over
               </button>

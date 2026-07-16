@@ -257,11 +257,9 @@ export async function matchDrawingStream(
   file: File,
   handlers: StreamEventHandlers,
   signal?: AbortSignal,
-  useLlm: boolean = true,
 ): Promise<MatchResult> {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("use_llm", String(useLlm));
 
   const response = await fetch(apiUrl("/api/v1/match/stream"), {
     method: "POST",

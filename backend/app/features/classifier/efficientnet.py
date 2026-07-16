@@ -130,6 +130,34 @@ class EfficientNetClassifier:
         is_mirror = key.endswith("-mirror")
         return ClassifierResult(master_key=key, confidence=confidence, is_mirror=is_mirror)
 
+    def predict_topk_from_pil(self, img: "Image.Image", k: int = 3) -> list[ClassifierResult]:
+        """Top-k predictions from an already-preprocessed PIL image."""
+        with self._lock:
+            if self._model is None:
+                return []
+
+        tensor = _TRANSFORM(img.convert("RGB")).unsqueeze(0)
+
+        with self._lock:
+            self._model.eval()
+            with torch.no_grad():
+                logits = self._model(tensor)
+                probs = torch.softmax(logits, dim=1)[0]
+                confs, idxs = probs.topk(min(k, probs.shape[0]))
+
+        results: list[ClassifierResult] = []
+        for conf, idx in zip(confs.tolist(), idxs.tolist()):
+            if idx >= len(self._label_index):
+                continue
+            key = self._label_index[idx]
+            base_key = key.replace("-mirror", "")
+            if self._class_counts.get(base_key, 0) < 1:
+                continue
+            results.append(
+                ClassifierResult(master_key=key, confidence=float(conf), is_mirror=key.endswith("-mirror"))
+            )
+        return results
+
     def is_confident(self, result: ClassifierResult | None) -> bool:
         return result is not None and result.confidence >= HIGH_CONFIDENCE_THRESHOLD
 

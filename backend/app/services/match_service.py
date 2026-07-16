@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from app.core.models.schemas import AgentTraceStep, MatchResult, MatchedMaster
+from app.core.models.schemas import AgentTraceStep, MatchResult, MatchedMaster, SketchAnalysis
 from app.features.agent.orchestrator import MatchOrchestrator
 from app.features.classifier.efficientnet import EfficientNetClassifier
 from app.features.db.database_service import db_service
@@ -54,18 +54,12 @@ class MatchService:
         sketch_path: Path,
         original_filename: str,
         on_step: OnStepCallback | None = None,
-        use_llm: bool = True,
     ) -> MatchResult:
         job_id = sketch_path.stem
         trace: list[AgentTraceStep] = []
         warnings: list[str] = []
 
-        logger.info(
-            "process_match start job=%s file=%s use_llm=%s",
-            job_id,
-            original_filename,
-            use_llm,
-        )
+        logger.info("process_match start job=%s file=%s", job_id, original_filename)
 
         upload_step = AgentTraceStep(
             step="upload",
@@ -97,41 +91,65 @@ class MatchService:
         trace.append(preprocess_step)
         await self._emit(preprocess_step, on_step)
 
-        # ── EfficientNet classifier ─────────────────────────────────────
+        # ── EfficientNet classifier — the DL alone picks the master ─────
         from app.core.models.schemas import ScoreBreakdown
         clf_result = self.classifier.predict_from_pil(preprocessed_pil) if self.classifier else None
 
-        # When LLM is disabled, always trust the DL model (ignore confidence threshold)
-        dl_only_mode = not use_llm
-        use_fast_path = (
-            clf_result is not None and (
-                self.classifier.is_confident(clf_result) or dl_only_mode
-            )
-        )
-
-        fast_master = self.catalog.get_by_key(clf_result.master_key) if use_fast_path and clf_result else None
+        fast_master = self.catalog.get_by_key(clf_result.master_key) if clf_result else None
         fast_confidence = clf_result.confidence if clf_result else 0.0
 
         if fast_master is not None:
-            mode_note = "DL-only mode" if dl_only_mode else "skipping LLM compare"
+            if fast_confidence < self.settings.dl_review_threshold:
+                warnings.append(
+                    f"Low classifier confidence ({fast_confidence:.0%}) — please review this match."
+                )
             logger.info(
-                "process_match %s fast path → %s (%.0f%%) %s",
+                "process_match %s → %s (%.0f%%)",
                 job_id,
                 fast_master.key,
                 fast_confidence * 100,
-                mode_note,
             )
             clf_step = AgentTraceStep(
                 step="classify",
                 status="completed",
-                message=f"EfficientNet → {fast_master.key} ({fast_confidence:.0%}) — {mode_note}",
+                message=f"EfficientNet → {fast_master.key} ({fast_confidence:.0%})",
                 data={"master_key": fast_master.key, "confidence": fast_confidence, "source": "efficientnet"},
             )
             trace.append(clf_step)
             await self._emit(clf_step, on_step)
 
-            # Run analyze to get handwritten_lengths for length extraction
-            analysis, step = self.orchestrator.analyze_sketch(sketch_path)
+            # The DL pick is authoritative — skip the generic analyze (which
+            # re-guesses category/segment count and often contradicts the DL).
+            # One focused call: read exactly the master's segment lengths.
+            lengths, extract_conf = await asyncio.to_thread(
+                self.orchestrator.analyzer.extract_lengths,
+                sketch_path,
+                fast_master.segment_count,
+            )
+            analysis = SketchAnalysis(
+                segment_count=fast_master.segment_count,
+                angles_estimate=[],
+                handwritten_lengths=lengths,
+                part_class_hint=fast_master.category,
+                fold_hints="",
+                confidence=extract_conf,
+                description=f"{fast_master.key} (selected by classifier)",
+            )
+            step = AgentTraceStep(
+                step="analyze",
+                status="completed",
+                message=(
+                    f"Read {len(lengths)} segment lengths for {fast_master.key} "
+                    f"({fast_master.segment_count} segments expected)"
+                ),
+                data={
+                    "segment_count": fast_master.segment_count,
+                    "part_class_hint": fast_master.category,
+                    "handwritten_lengths": lengths,
+                    "confidence": extract_conf,
+                    "source": "master_constrained_read",
+                },
+            )
             trace.append(step)
             await self._emit(step, on_step)
 
@@ -145,9 +163,8 @@ class MatchService:
                 combined_score=fast_confidence,
             )
             top_candidates = []
-            warnings = []
-        elif dl_only_mode:
-            # LLM off but classifier returned nothing (model not loaded yet)
+        else:
+            # Classifier returned nothing (model not loaded yet)
             warnings = ["Classifier not ready — no model loaded. Please retrain."]
             result = MatchResult(
                 job_id=job_id,
@@ -165,62 +182,15 @@ class MatchService:
             self._results[job_id] = result
             await db_service.save_match(result, str(sketch_path))
             return result
-        else:
-            # ── Full LLM path ───────────────────────────────────────────
-            logger.info("process_match %s full LLM path", job_id)
-            analysis, step = self.orchestrator.analyze_sketch(sketch_path)
-            trace.append(step)
-            await self._emit(step, on_step)
 
-            candidates, step = await self.orchestrator.retrieve_candidates(sketch_path, analysis)
-            trace.append(step)
-            await self._emit(step, on_step)
-
-            if not candidates:
-                raise ValueError("No master drawings found in catalog")
-
-            comparisons, step = await self.orchestrator.compare_candidates(sketch_path, candidates)
-            trace.append(step)
-            await self._emit(step, on_step)
-
-            master, confidence, breakdown, match_warnings, top_candidates, step = self.orchestrator.select_master(
-                analysis, candidates, comparisons
-            )
-            trace.append(step)
-            await self._emit(step, on_step)
-            warnings.extend(match_warnings)
-
-        # No match — return early with no_match=True
-        if master is None:
-            logger.info("process_match %s → no_match", job_id)
-            result = MatchResult(
-                job_id=job_id,
-                matched_master=None,
-                no_match=True,
-                confidence=0.0,
-                extracted_lengths=[],
-                filled_json={},
-                agent_trace=trace,
-                upload_image_url=f"/api/v1/match/{job_id}/upload",
-                warnings=["No matching master drawing found for this sketch."],
-                score_breakdown=breakdown,
-                top_candidates=top_candidates,
-            )
-            self._results[job_id] = result
-            await db_service.save_match(result, str(sketch_path))
-            return result
-
-        lengths, extract_conf, step = self.orchestrator.extract_lengths(
-            sketch_path, master, analysis
+        lengths, extract_conf, step = await asyncio.to_thread(
+            self.orchestrator.extract_lengths, sketch_path, master, analysis
         )
         trace.append(step)
         await self._emit(step, on_step)
 
-        if breakdown.vision_score >= self.settings.min_vision_score:
-            confidence = (breakdown.vision_score + extract_conf) / 2
-        else:
-            confidence = min(confidence, breakdown.combined_score)
-
+        # Match confidence is the classifier's own — it made the pick, it owns the number.
+        # extract_conf (length-reading confidence) is reported separately in the extract step.
         filled = fill_master_json(master, lengths)
         val_warnings = validate_drawing(filled)
         warnings.extend(val_warnings)
@@ -269,7 +239,6 @@ class MatchService:
         self,
         sketch_path: Path,
         original_filename: str,
-        use_llm: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -278,7 +247,7 @@ class MatchService:
 
         async def run() -> None:
             try:
-                result = await self.process_match(sketch_path, original_filename, on_step=on_step, use_llm=use_llm)
+                result = await self.process_match(sketch_path, original_filename, on_step=on_step)
                 await queue.put({"type": "result", "payload": result.model_dump()})
             except Exception as e:
                 logger.exception("Match pipeline failed for %s", original_filename)

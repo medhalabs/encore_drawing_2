@@ -14,10 +14,18 @@ class Settings(BaseSettings):
     ollama_base_url: str = "https://ollama.com"
     ollama_embed_base_url: str = "https://api.ollama.cloud"
     ollama_api_key: str = ""
-    ollama_vision_model: str = "gemma4:31b-cloud"        # used for compare (accuracy matters)
-    ollama_analyze_model: str = "gemma3:27b-cloud"         # used for analyze (speed matters)
+    ollama_vision_model: str = "minimax-m3:cloud"        # compare: fast, reasons by default
+    # analyze/extract: gemma4 is deterministic at temp 0 (identical reads across runs);
+    # minimax-m3's always-on thinking gives different numbers run-to-run
+    ollama_analyze_model: str = "gemma4:31b-cloud"
     ollama_llm_text_model: str = "gpt-oss:120b-cloud"
     ollama_embed_model: str = "nomic-embed-text"
+    # Ask the vision model to reason (Ollama `think` channel) before answering.
+    # gemma4:31b-cloud supports this; reasoning is separated from the JSON content.
+    # Compare (shape matching) benefits from reasoning; analyze (reading numbers)
+    # is kept fast — reasoning there added ~90s/call for little gain.
+    ollama_enable_thinking: bool = True
+    ollama_analyze_thinking: bool = False
 
     retrieval_vector_weight: float = 0.35
     retrieval_rule_weight: float = 0.65
@@ -32,12 +40,12 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
 
     database_url: str = "postgresql+asyncpg://encore:encore@localhost:5455/encore_drawings"
-    redis_url: str = "redis://localhost:6377/0"
-    redis_cache_ttl_seconds: int = 86400
     log_level: str = "INFO"
 
-    min_vision_score: float = 0.72
-    no_match_vision_threshold: float = 0.55
+    # The DL classifier always picks the master. Below this confidence, the
+    # match is still returned but flagged with a warning for human review.
+    dl_review_threshold: float = 0.5
+
     feedback_image_match_threshold: float = 0.72
     feedback_image_boost: float = 60.0
     wrong_master_penalty: float = 35.0
