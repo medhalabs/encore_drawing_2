@@ -1,14 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { apiUrl } from "@/lib/api";
 import type { AgentTraceStep } from "@/lib/api";
 
 const PIPELINE_STEPS = [
   "upload",
+  "preprocess",
+  "classify",
   "analyze",
-  "retrieve",
-  "compare",
-  "match",
   "extract",
   "validate",
 ];
@@ -29,21 +29,39 @@ function statusColor(status: string) {
   return "bg-slate-700";
 }
 
-function RetrieveStepSummary({ data }: { data: Record<string, unknown> }) {
-  const vectorTop = data.vector_top_candidates as Array<{ key: string; similarity: number }> | undefined;
-  if (!vectorTop?.length) return null;
+function PreprocessStepDetails({ data }: { data: Record<string, unknown> }) {
+  const originalUrl = data.original_image_url as string | undefined;
+  const preprocessedUrl = data.preprocessed_image_url as string | undefined;
+  if (!preprocessedUrl) return null;
 
   return (
-    <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-      <p className="text-xs font-medium text-slate-300 mb-2">pgvector top matches</p>
-      <ul className="space-y-1 text-xs text-slate-400">
-        {vectorTop.slice(0, 5).map((item) => (
-          <li key={item.key} className="flex justify-between gap-4">
-            <span className="truncate">{item.key}</span>
-            <span className="text-slate-300 shrink-0">{Math.round(item.similarity * 100)}%</span>
-          </li>
-        ))}
-      </ul>
+    <div className="mt-2 space-y-2">
+      <div className="flex gap-4 flex-wrap">
+        {originalUrl && (
+          <div className="space-y-1">
+            <p className="text-xs text-slate-400">Original upload:</p>
+            <div className="rounded-lg border border-slate-700 p-2 inline-block" style={{ background: "#fff" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={apiUrl(originalUrl)}
+                alt="Original sketch"
+                className="max-h-52 max-w-xs rounded object-contain"
+              />
+            </div>
+          </div>
+        )}
+        <div className="space-y-1">
+          <p className="text-xs text-slate-400">Preprocessed (sent to classifier):</p>
+          <div className="rounded-lg border border-slate-700 p-2 inline-block" style={{ background: "#fff" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={apiUrl(preprocessedUrl)}
+              alt="Preprocessed sketch"
+              className="max-h-52 max-w-xs rounded object-contain"
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -55,10 +73,12 @@ function StepDetails({ step, data }: { step: string; data: Record<string, unknow
 
   return (
     <>
-      {step === "retrieve" && <RetrieveStepSummary data={data} />}
-      <pre className="mt-2 rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs overflow-auto max-h-64 text-slate-300">
-        {JSON.stringify(data, null, 2)}
-      </pre>
+      {step === "preprocess" && <PreprocessStepDetails data={data} />}
+      {step !== "preprocess" && (
+        <pre className="mt-2 rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs overflow-auto max-h-64 text-slate-300">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      )}
     </>
   );
 }
@@ -100,7 +120,7 @@ export default function MatchProgress({ trace, loading, currentStep }: Props) {
           const entry = traceByStep.get(step);
           const isActive = activeStep === step && loading;
           const isDone = !!entry;
-          const isOpen = expanded[step] ?? isActive ?? false;
+          const isOpen = expanded[step] ?? (step === "preprocess" && isDone) ?? isActive ?? false;
 
           return (
             <div

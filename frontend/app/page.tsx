@@ -6,7 +6,7 @@ import MatchProgress, { type LiveTraceStep } from "@/components/MatchProgress";
 import MatchResults from "@/components/MatchResults";
 import { matchDrawingStream, type MatchResult } from "@/lib/api";
 
-const STEP_ORDER = ["upload", "analyze", "retrieve", "compare", "match", "extract", "validate"];
+const STEP_ORDER = ["upload", "preprocess", "classify", "analyze", "extract", "validate"];
 
 export default function HomePage() {
   const [file, setFile] = useState<File | null>(null);
@@ -47,7 +47,7 @@ export default function HomePage() {
           onResult: (r) => setResult(r),
           onError: (msg) => setError(msg),
         },
-        abortRef.current.signal
+        abortRef.current.signal,
       );
       setResult(data);
       setLiveTrace(data.agent_trace.map((s) => ({ ...s })));
@@ -74,6 +74,7 @@ export default function HomePage() {
         >
           {loading ? "Processing… watch pipeline on the right" : "Match Drawing"}
         </button>
+
         {error && (
           <div className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
             {error}

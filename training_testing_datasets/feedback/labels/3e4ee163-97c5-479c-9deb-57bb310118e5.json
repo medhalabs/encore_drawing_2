@@ -1,0 +1,33 @@
+{
+  "_id": "69a1086de52337e366397f74",
+  "name": "gutter-11-mirror",
+  "lengths": [
+    100.0,
+    290.0,
+    100.0
+  ],
+  "angles": [
+    90.0,
+    90.0
+  ],
+  "direction": "Down",
+  "reverseColor": true,
+  "isTaper": false,
+  "farLengths": [],
+  "farAngles": [],
+  "nearLengths": [],
+  "nearAngles": [],
+  "partGroup": "Flashing",
+  "partClass": "Gutters",
+  "firstSegmentAngle": -90.0,
+  "flipH": false,
+  "flipV": false,
+  "startFoldType": null,
+  "startFoldDirection": null,
+  "startFoldLength": null,
+  "startFoldGap": null,
+  "endFoldType": null,
+  "endFoldDirection": null,
+  "endFoldLength": null,
+  "endFoldGap": null
+}

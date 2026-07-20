@@ -1,9 +1,36 @@
+import json
+from pathlib import Path
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.db.models import Correction, MasterDrawing
+from app.features.db.models import Color, Correction, MasterDrawing, Material
 from app.features.embeddings.service import EmbeddingService
 from app.features.masters.catalog import MasterCatalog
+
+MATERIALS_COLORS_JSON = Path(__file__).resolve().parents[3] / "data" / "materials_colors.json"
+
+
+async def seed_materials_colors_if_empty(session: AsyncSession) -> tuple[int, int]:
+    """Seed materials and colors from data/materials_colors.json (exported from
+    the Encore 'Materials and colors.xlsx'). Skips if the tables have data."""
+    count = await session.scalar(select(func.count()).select_from(Material))
+    if count and count > 0:
+        return 0, 0
+    if not MATERIALS_COLORS_JSON.exists():
+        return 0, 0
+
+    with MATERIALS_COLORS_JSON.open() as f:
+        data = json.load(f)
+
+    for m in data.get("materials", []):
+        session.add(Material(id=m["id"], name=m["name"], density=m["density"]))
+    # Flush so materials exist before colors reference them via FK
+    await session.flush()
+    for c in data.get("colors", []):
+        session.add(Color(id=c["id"], name=c["name"], material_id=c["material_id"]))
+    await session.commit()
+    return len(data.get("materials", [])), len(data.get("colors", []))
 
 
 async def seed_masters_if_empty(session: AsyncSession, catalog: MasterCatalog) -> int:

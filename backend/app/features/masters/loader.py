@@ -1,8 +1,56 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.models.schemas import EncoreDrawing
+
+
+@dataclass
+class ProfileFingerprint:
+    """Deterministic geometric signature computed from exact master JSON data."""
+    segment_count: int
+    angle_pattern: tuple[int, ...]      # angles rounded to nearest 15°
+    angle_pattern_rev: tuple[int, ...]  # reversed — for flip-invariant matching
+    length_ratios: tuple[float, ...]    # normalised segment proportions
+    direction: str
+    has_start_fold: bool
+    has_end_fold: bool
+    part_class: str
+
+    def angle_distance(self, sketch_angles: list[float]) -> float:
+        """Min of forward and reversed angle distance — handles mirrored profiles."""
+        if not sketch_angles or len(sketch_angles) != len(self.angle_pattern):
+            return 999.0
+        forward = sum(abs(a - b) for a, b in zip(self.angle_pattern, sketch_angles)) / len(sketch_angles)
+        backward = sum(abs(a - b) for a, b in zip(self.angle_pattern_rev, sketch_angles)) / len(sketch_angles)
+        return min(forward, backward)
+
+    def length_ratio_distance(self, sketch_lengths: list[float]) -> float:
+        """Compare relative proportions of segment lengths — ignores absolute scale."""
+        if not sketch_lengths or len(sketch_lengths) != len(self.length_ratios):
+            return 999.0
+        total = sum(sketch_lengths)
+        if total == 0:
+            return 999.0
+        sketch_ratios = [l / total for l in sketch_lengths]
+        return sum(abs(a - b) for a, b in zip(self.length_ratios, sketch_ratios)) / len(sketch_ratios)
+
+
+def _build_fingerprint(drawing: EncoreDrawing) -> ProfileFingerprint:
+    angles = drawing.angles
+    lengths = drawing.lengths
+    total = sum(lengths) or 1.0
+    angle_pattern = tuple(round(a / 15) * 15 for a in angles)
+    return ProfileFingerprint(
+        segment_count=len(lengths),
+        angle_pattern=angle_pattern,
+        angle_pattern_rev=tuple(reversed(angle_pattern)),
+        length_ratios=tuple(l / total for l in lengths),
+        direction=drawing.direction,
+        has_start_fold=drawing.start_fold_type is not None,
+        has_end_fold=drawing.end_fold_type is not None,
+        part_class=drawing.part_class,
+    )
 
 
 @dataclass
@@ -13,6 +61,10 @@ class MasterRecord:
     json_path: Path
     image_path: Path
     drawing: EncoreDrawing
+    fingerprint: ProfileFingerprint = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.fingerprint = _build_fingerprint(self.drawing)
 
     @property
     def segment_count(self) -> int:
@@ -47,6 +99,20 @@ def load_master_record(category: str, json_path: Path) -> MasterRecord | None:
     )
 
 
+def _make_mirror_record(original: MasterRecord) -> MasterRecord:
+    """Create a mirror-keyed record sharing the same JSON/drawing but pointing at the -mirror.png."""
+    mirror_image = original.image_path.parent / f"{original.basename}-mirror.png"
+    mirror_basename = f"{original.basename}-mirror"
+    return MasterRecord(
+        key=f"{original.category}/{mirror_basename}",
+        category=original.category,
+        basename=mirror_basename,
+        json_path=original.json_path,
+        image_path=mirror_image,
+        drawing=original.drawing,
+    )
+
+
 def load_all_masters(root_dir: Path) -> list[MasterRecord]:
     masters: list[MasterRecord] = []
     if not root_dir.exists():
@@ -59,5 +125,8 @@ def load_all_masters(root_dir: Path) -> list[MasterRecord]:
             record = load_master_record(category_dir.name, json_path)
             if record:
                 masters.append(record)
+                mirror_image = json_path.parent / f"{record.basename}-mirror.png"
+                if mirror_image.exists():
+                    masters.append(_make_mirror_record(record))
 
     return masters

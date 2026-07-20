@@ -28,25 +28,38 @@ class DatabaseService:
     ) -> None:
         if not settings.database_url:
             return
-        init_db(settings)
-        from app.features.db import session as db_session
-        self._factory = db_session._session_factory
-        self._enabled = True
-        await create_tables()
-        embedded = 0
-        async with self._factory() as session:
-            added = await seed.seed_masters_if_empty(session, catalog)
-            imported = await seed.import_corrections_from_manifest(session, file_feedback_entries)
-            if embedding_service:
-                try:
-                    embedded = await seed.backfill_master_embeddings(
-                        session, catalog, embedding_service
-                    )
-                except Exception as e:
-                    print(f"Embedding backfill skipped: {e}")
-                    embedded = 0
-        if added or imported or embedded:
-            print(f"DB seeded: {added} masters, {imported} corrections imported, {embedded} embeddings backfilled")
+        try:
+            init_db(settings)
+            from app.features.db import session as db_session
+            await create_tables()
+            embedded = 0
+            async with db_session._session_factory() as session:
+                added = await seed.seed_masters_if_empty(session, catalog)
+                mats, cols = await seed.seed_materials_colors_if_empty(session)
+                if mats or cols:
+                    print(f"DB seeded: {mats} materials, {cols} colors")
+                imported = await seed.import_corrections_from_manifest(session, file_feedback_entries)
+                if embedding_service:
+                    try:
+                        embedded = await seed.backfill_master_embeddings(
+                            session, catalog, embedding_service
+                        )
+                    except Exception as e:
+                        print(f"Embedding backfill skipped: {e}")
+                        embedded = 0
+            self._factory = db_session._session_factory
+            self._enabled = True
+            if added or imported or embedded:
+                print(
+                    f"DB seeded: {added} masters, {imported} corrections imported, "
+                    f"{embedded} embeddings backfilled"
+                )
+        except Exception:
+            from app.features.db.session import close_db
+            await close_db()
+            self._enabled = False
+            self._factory = None
+            raise
 
     async def shutdown(self) -> None:
         from app.features.db.session import close_db
@@ -79,8 +92,11 @@ class DatabaseService:
     async def load_corrections(self) -> list:
         if not self._enabled or self._factory is None:
             return []
-        async with self._factory() as session:
-            return await DatabaseRepository(session).list_corrections()
+        try:
+            async with self._factory() as session:
+                return await DatabaseRepository(session).list_corrections()
+        except Exception:
+            return []
 
     async def search_masters_by_embedding(
         self, query_vector: list[float], limit: int = 20

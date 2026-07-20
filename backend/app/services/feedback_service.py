@@ -12,18 +12,21 @@ class FeedbackService:
     async def submit(self, request: FeedbackRequest) -> FeedbackResponse:
         previous_key = ""
         result = self.match_service.get_result(request.job_id)
-        if result:
+        if result and result.matched_master:
             previous_key = result.matched_master.key
 
         entry, filled_json = self.store.save_correction(request, previous_key)
         await db_service.save_correction(entry, filled_json)
 
-        from app.main import retriever
+        from app.main import retriever, retrain_service
         entries = await db_service.load_corrections()
         if entries:
             retriever.set_feedback_entries(entries)
         else:
             retriever.set_feedback_entries(self.store.entries)
+
+        # Trigger EfficientNet retrain every N new corrections
+        retrain_service.maybe_retrain(len(self.store.entries))
 
         return FeedbackResponse(entry=entry, filled_json=filled_json)
 
