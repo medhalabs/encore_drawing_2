@@ -5,6 +5,7 @@ Also scans master drawings directory to seed training data.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from pathlib import Path
@@ -26,19 +27,52 @@ class RetrainService:
         self.classifier = classifier
         self.master_drawings_dir = master_drawings_dir
         self.feedback_dir = feedback_dir
-        self._correction_count_at_last_retrain = 0
+        # training_synth/<Category>/<stem>/ — same layout generate_synthetic_sketches.py
+        # writes and scripts/train_from_dl.py reads. Without this the live incremental
+        # retrain trains on ~50 master images instead of the ~14k synthetic corpus that
+        # took accuracy from 24%->52%, and silently regresses the promoted model.
+        self.synth_dir = master_drawings_dir.parent / "training_synth"
+        # Persisted so a dev-server restart (--reload) doesn't reset this to 0 and fire
+        # a retrain on the very next correction — that's what produced the regressed
+        # efficientnet_v016.pt on 2026-07-16 (moved to data/models/discarded/).
+        self._state_path = classifier.model_dir / "retrain_state.json"
+        self._correction_count_at_last_retrain = self._load_state()
+
+    def _load_state(self) -> int:
+        try:
+            return json.loads(self._state_path.read_text())["correction_count_at_last_retrain"]
+        except Exception:
+            return 0
+
+    def _save_state(self) -> None:
+        self._state_path.write_text(
+            json.dumps({"correction_count_at_last_retrain": self._correction_count_at_last_retrain})
+        )
 
     def seed_from_masters(self) -> list[tuple[Path, str]]:
-        """Collect (image_path, master_key) pairs from the master catalog (originals only)."""
+        """Collect (image_path, master_key) pairs from the master catalog (base + mirror)."""
         items: list[tuple[Path, str]] = []
         for category_dir in sorted(self.master_drawings_dir.iterdir()):
             if not category_dir.is_dir():
                 continue
             for png in sorted(category_dir.glob("*.png")):
-                if "-mirror" in png.stem:
-                    continue
                 key = f"{category_dir.name}/{png.stem}"
                 items.append((png, key))
+        return items
+
+    def seed_from_synthetic(self) -> list[tuple[Path, str]]:
+        """Collect (image_path, master_key) pairs from the synthetic sketch corpus."""
+        items: list[tuple[Path, str]] = []
+        if not self.synth_dir.exists():
+            return items
+        for category_dir in sorted(self.synth_dir.iterdir()):
+            if not category_dir.is_dir():
+                continue
+            for stem_dir in sorted(category_dir.iterdir()):
+                if not stem_dir.is_dir():
+                    continue
+                key = f"{category_dir.name}/{stem_dir.name}"
+                items += [(p, key) for p in sorted(stem_dir.glob("*.png"))]
         return items
 
     def collect_corrections(self) -> list[tuple[Path, str]]:
@@ -68,9 +102,9 @@ class RetrainService:
 
     def build_training_set(self) -> list[tuple[Path, str]]:
         masters = self.seed_from_masters()
+        synthetic = self.seed_from_synthetic()
         corrections = self.collect_corrections()
-        # Corrections override / augment master seeds
-        return masters + corrections
+        return masters + synthetic + corrections
 
     def update_class_counts(self) -> None:
         items = self.build_training_set()
@@ -87,6 +121,7 @@ class RetrainService:
             return False
 
         self._correction_count_at_last_retrain = current_correction_count
+        self._save_state()
         training_data = self.build_training_set()
         self.update_class_counts()
 
